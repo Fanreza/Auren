@@ -1,0 +1,53 @@
+{
+  "name": "auren",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@coinbase/wallet-sdk": "^4.3.7",
+    "@ensofinance/sdk": "^2.0.12",
+    "@farcaster/miniapp-sdk": "^0.2.3",
+    "@farcaster/miniapp-wagmi-connector": "^1.1.1",
+    "@pinia/nuxt": "^0.11.3",
+    "@privy-io/js-sdk-core": "^0.60.4",
+    "@supabase/supabase-js": "^2.98.0",
+    "@tanstack/vue-query": "^5.92.9",
+    "@vueuse/core": "^14.2.1",
+    "@wagmi/core": "^2.22.1",
+    "@walletconnect/ethereum-provider": "^2.23.7",
+    "@yo-protocol/core": "^1.0.7",
+    "buffer": "^6.0.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "driver.js": "^1.4.0",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.2.0",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-vue-next": "^0.577.0",
+    "nuxt": "^4.3.1",
+    "pinia": "^3.0.4",
+    "reka-ui": "^2.9.2",
+    "tailwind-merge": "^3.5.0",
+    "viem": "^2.47.0",
+    "vue": "^3.5.29",
+    "vue-router": "^5.0.3",
+    "vue-sonner": "^2.0.9"
+  },
+  "devDependencies": {
+    "@nuxt/fonts": "^0.14.0",
+    "@nuxt/icon": "^2.2.1",
+    "@tailwindcss/vite": "^4.2.1",
+    "@vite-pwa/nuxt": "^1.1.1",
+    "shadcn-nuxt": "^2.4.3",
+    "tailwindcss": "^4.2.1",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.9.3"
+  }
+}

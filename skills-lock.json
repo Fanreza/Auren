@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "skills": {
+    "authenticate-wallet": {
+      "source": "coinbase/agentic-wallet-skills",
+      "sourceType": "github",
+      "computedHash": "0043fa9f4a172fe87b22aa698c6fcf866efaebc71a94ba53333c480915c302c5"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "516bd2154eb843a8240e43d5b285229129853114ad7075a5e141e1c08e408c84"
+    },
+    "fund": {
+      "source": "coinbase/agentic-wallet-skills",
+      "sourceType": "github",
+      "computedHash": "4e9d574f8127174493d625d168a144700f88757f13ef3e15dfddb2368cf54cf3"
+    },
+    "nuxt": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "6f5456948b35c0c0005424098eaf28ebbba1bbd92a3f3268466fe7d85e9e3789"
+    },
+    "pinia": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "8e8346fac8cb76d6f186462b712352d5a651c9c049076ea73559f47210c874ef"
+    },
+    "send-usdc": {
+      "source": "coinbase/agentic-wallet-skills",
+      "sourceType": "github",
+      "computedHash": "27e234e7420eeafca161b46a4836ce3c644a2474f5ffca905c98c4ffe39c8a47"
+    },
+    "swap-integration": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "bfcc62fe2ad931e1e36f0d3d59937c5b1925bb394a818fab6f50aa3760c6f850"
+    },
+    "swap-planner": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "541437747e06b155e81c79e59ca1901e0e2844586070f5c37b82971f42cb5acb"
+    },
+    "tailwindcss-development": {
+      "source": "coollabsio/coolify",
+      "sourceType": "github",
+      "computedHash": "f88155b297f310705977de18f7d6dfb9277301069d2ce98d332b0286a0253c65"
+    },
+    "v4-security-foundations": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "f6c4c7fdb6ae75a9b5810da9d15b8b560b566a081eebe7515f0fe956e790ca85"
+    },
+    "viem-integration": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "a4a12d5a5f55aad765083efbeb408d6ba3bf35e13d364832db26d4573e521b81"
+    },
+    "vite": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "f406fceb1b9020cd759a728d8424de7ffd8dfe5874bd97be2724571741e54852"
+    },
+    "vue": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "f72b54618560c53d65740515ded5bb833750c4574dbe961fd21f022bd2b31a74"
+    },
+    "vue-best-practices": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "b61d50aeced30790f4e8e08d15da4b7148443e312bd3c6fedc38b500baa75f17"
+    },
+    "vue-router-best-practices": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "31c030ca4fcafe466070a7a99bf5a658ed9133eefff20d6a9f7bc77ebe9c1287"
+    },
+    "vue-testing-best-practices": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "4fde92de9962e71d4a10694b5f4ba6989b90a328fd3c40c5a9d8982c3d8c008d"
+    },
+    "vueuse-functions": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "66643d68bd9da4887e87a0bcb35af9ff4c9c35115ac57f3dd89cd65320046d80"
+    },
+    "web-artifacts-builder": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "computedHash": "8506451d6d3a3494ddca091b0f0ff7a9961ddd4301df2b6264dd3f98bed75b0a"
+    },
+    "web-design-guidelines": {
+      "source": "antfu/skills",
+      "sourceType": "github",
+      "computedHash": "e1089d00a849545f12afda48a24d6ce25ce067c6ec6f2b63a76e8bd114acd6d1"
+    },
+    "yo-protocol-cli": {
+      "source": "yoprotocol/yo-protocol-skills",
+      "sourceType": "github",
+      "computedHash": "f50cd93b592db40087d9393901ab3746d0ddf45edaa83f6cfbe1dd57f23d01f2"
+    },
+    "yo-protocol-sdk": {
+      "source": "yoprotocol/yo-protocol-skills",
+      "sourceType": "github",
+      "computedHash": "00000cbf8d56f76c0a7db836c4eb25479c65fddafa93828f004576664f7cc44b"
+    }
+  }
+}

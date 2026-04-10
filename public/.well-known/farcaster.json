@@ -1,0 +1,26 @@
+{
+	"accountAssociation": {
+		"header": "eyJmaWQiOjcxNzYxMSwidHlwZSI6ImF1dGgiLCJrZXkiOiIweDRmQTg5YTI4MTEyMzMwMzc4ZTM4MjI5NjRlNGIzNTc0MzhkNzljMEUifQ",
+		"payload": "eyJkb21haW4iOiJuZXN0b3JhLmFldGhlcmVhbC50b3AifQ",
+		"signature": "S4Vd7VNJCoHUumw6ZzbYJiMufhRhzPGkBVbbYnwjTUxezCOxvQCdjJ0rIl2yVo/bRJwYWCZ2m6GM/Ytk8gWVGhw="
+	},
+	"miniapp": {
+		"version": "1",
+		"name": "Auren",
+		"iconUrl": "https://auren.app/icon.png",
+		"homeUrl": "https://auren.app",
+		"splashImageUrl": "https://auren.app/splash.png",
+		"splashBackgroundColor": "#0B1314",
+		"heroImageUrl": "https://auren.app/hero.png",
+		"subtitle": "Smart pockets on Base",
+		"description": "Goal-based savings on Base. Create pockets, set targets, earn yield automatically. Deposit any token — no DeFi knowledge needed.",
+		"screenshotUrls": [],
+		"primaryCategory": "finance",
+		"tags": ["defi", "savings", "yield", "base", "usdc"],
+		"tagline": "Smart pockets for modern onchain savers",
+		"ogTitle": "Auren — Smart pockets on Base",
+		"ogDescription": "Goal-based savings on Base. Create pockets, set targets, earn yield. No DeFi knowledge needed.",
+		"ogImageUrl": "https://auren.app/logo.png",
+		"noindex": false
+	}
+}

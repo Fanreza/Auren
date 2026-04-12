@@ -47,8 +47,7 @@ defineExpose({ requestDelete })
         <AlertDialogTitle>{{ hasFunds ? "Can't delete pocket" : 'Delete pocket?' }}</AlertDialogTitle>
         <AlertDialogDescription>
           <template v-if="hasFunds">
-            <span class="font-medium text-foreground">{{ pocketToDelete?.name }}</span> still has funds. Use the Cash Out button to withdraw first, then delete the pocket. You can also withdraw directly via
-            <a href="https://app.yo.xyz" target="_blank" rel="noopener" class="text-primary underline underline-offset-2 hover:text-primary/80">app.yo.xyz</a>.
+            <span class="font-medium text-foreground">{{ pocketToDelete?.name }}</span> still has funds. Use the Cash Out button to withdraw first, then delete the pocket.
           </template>
           <template v-else>
             Are you sure you want to delete <span class="font-medium text-foreground">{{ pocketToDelete?.name }}</span>? This action cannot be undone.

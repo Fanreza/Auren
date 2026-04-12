@@ -3,49 +3,105 @@ import { BRAND } from '~/config/brand'
 </script>
 
 <template>
-  <footer class="border-t border-white/6">
-    <div class="max-w-6xl mx-auto px-5 sm:px-6 lg:px-8 py-10">
-      <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div class="flex items-center gap-2.5">
-          <img src="/logo.png" :alt="BRAND.name" class="w-7 h-7" />
-          <span class="font-bold text-lg text-foreground">{{ BRAND.name }}</span>
-          <Badge
-            variant="secondary"
-            class="text-[10px] uppercase tracking-wider bg-white/6 text-muted-foreground border-0"
-          >
-            Beta
-          </Badge>
+  <footer class="border-t border-border mt-16">
+    <div class="max-w-6xl mx-auto px-5 sm:px-6 lg:px-8 py-12">
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-10">
+        <!-- Brand column -->
+        <div class="col-span-2 md:col-span-1">
+          <div class="flex items-center gap-2.5 mb-3">
+            <img src="/new.jpeg" :alt="BRAND.name" class="w-8 h-8 rounded-lg object-cover" />
+            <span class="font-bold text-foreground">{{ BRAND.name }}</span>
+            <span class="text-[10px] uppercase tracking-widest font-semibold text-muted-foreground/60 border border-border px-1.5 py-0.5 rounded-md">Beta</span>
+          </div>
+          <p class="text-xs text-muted-foreground/70 leading-relaxed max-w-55">
+            {{ BRAND.tagline }}
+          </p>
         </div>
 
-        <div class="flex items-center gap-6 text-sm text-muted-foreground">
-          <NuxtLink
-            to="/app"
-            class="hover:text-foreground transition-colors duration-200"
-          >
-            App
-          </NuxtLink>
-          <a
-            href="https://basescan.org"
-            target="_blank"
-            rel="noopener"
-            class="hover:text-foreground transition-colors duration-200 inline-flex items-center gap-1"
-          >
-            BaseScan
-            <Icon name="lucide:external-link" class="w-3 h-3" />
-          </a>
+        <!-- Product -->
+        <div>
+          <p class="text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wider mb-3">Product</p>
+          <ul class="space-y-2 text-sm">
+            <li>
+              <NuxtLink to="/app" class="text-muted-foreground hover:text-foreground transition-colors">
+                Dashboard
+              </NuxtLink>
+            </li>
+            <li>
+              <NuxtLink to="/learn" class="text-muted-foreground hover:text-foreground transition-colors">
+                Learn
+              </NuxtLink>
+            </li>
+            <li>
+              <NuxtLink to="/profile" class="text-muted-foreground hover:text-foreground transition-colors">
+                Profile
+              </NuxtLink>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Legal -->
+        <div>
+          <p class="text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wider mb-3">Legal</p>
+          <ul class="space-y-2 text-sm">
+            <li>
+              <NuxtLink to="/terms" class="text-muted-foreground hover:text-foreground transition-colors">
+                Terms of Service
+              </NuxtLink>
+            </li>
+            <li>
+              <NuxtLink to="/privacy" class="text-muted-foreground hover:text-foreground transition-colors">
+                Privacy Policy
+              </NuxtLink>
+            </li>
+            <li>
+              <NuxtLink to="/risks" class="text-muted-foreground hover:text-foreground transition-colors">
+                Risk Disclosure
+              </NuxtLink>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Connect -->
+        <div>
+          <p class="text-[11px] font-semibold text-muted-foreground/80 uppercase tracking-wider mb-3">Connect</p>
+          <ul class="space-y-2 text-sm">
+            <li>
+              <a
+                :href="BRAND.supportX"
+                target="_blank" rel="noopener"
+                class="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                X / Twitter
+                <Icon name="lucide:external-link" class="w-3 h-3" />
+              </a>
+            </li>
+            <li>
+              <a
+                href="https://basescan.org"
+                target="_blank" rel="noopener"
+                class="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Basescan
+                <Icon name="lucide:external-link" class="w-3 h-3" />
+              </a>
+            </li>
+          </ul>
         </div>
       </div>
 
-      <Separator class="my-6 bg-white/6" />
+      <!-- Disclaimer + copyright -->
+      <div class="pt-6 border-t border-border/50 space-y-3">
+        <p class="text-[11px] text-muted-foreground/50 leading-relaxed max-w-3xl mx-auto text-center">
+          Returns may vary and are not guaranteed. {{ BRAND.name }} is not a bank and does not provide financial advice.
+          Funds are managed by automated smart contracts which carry inherent risk. Only save what you can afford to lose.
+        </p>
+        <p class="text-center text-xs text-muted-foreground/40">
+          &copy; {{ new Date().getFullYear() }} {{ BRAND.name }} &mdash; All rights reserved
+        </p>
+      </div>
 
-      <p class="text-center text-[11px] text-muted-foreground/50 leading-relaxed max-w-lg mx-auto">
-        Returns may vary and are not guaranteed. {{ BRAND.name }} is not a bank and does not provide financial advice.
-        Your funds are managed by automated programs that carry inherent risk. Only save what you can afford to lose.
-      </p>
-
-      <p class="mt-4 text-center text-xs text-muted-foreground/60">
-        &copy; {{ new Date().getFullYear() }} {{ BRAND.name }}. {{ BRAND.tagline }}
-      </p>
     </div>
   </footer>
 </template>

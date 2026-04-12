@@ -34,6 +34,10 @@ function onTargetInput(v: string) {
 }
 
 watch(open, (v) => {
+  if (!v) {
+    showDatePicker.value = false
+    return
+  }
   if (v) {
     name.value = props.pocket.name
     // Format target amount with commas

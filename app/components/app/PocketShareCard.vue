@@ -35,7 +35,7 @@ const colors = computed(() => colorMap[props.strategyColor] ?? colorMap.emerald!
     <!-- Header -->
     <div class="flex items-center justify-between mb-6 relative z-10">
       <div class="flex items-center gap-2.5">
-        <img src="/logo.png" :alt="BRAND.name" class="w-9 h-9 rounded-lg" />
+        <img src="/new.jpeg" :alt="BRAND.name" class="w-9 h-9 rounded-lg" />
         <div>
           <p class="text-xs text-zinc-500 mb-0.5">{{ BRAND.name }}</p>
           <p class="text-base font-semibold text-white">{{ pocketName }}</p>

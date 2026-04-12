@@ -26,7 +26,7 @@ onMounted(async () => {
 
 <template>
   <div class="h-dvh flex flex-col items-center justify-center gap-4 bg-background">
-    <img src="/logo.png" :alt="BRAND.name" class="w-16 h-16 animate-pulse" />
+    <img src="/new.jpeg" :alt="BRAND.name" class="w-16 h-16 animate-pulse" />
     <p class="text-sm text-muted-foreground">Signing you in...</p>
   </div>
 </template>

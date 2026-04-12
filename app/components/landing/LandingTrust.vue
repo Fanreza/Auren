@@ -1,97 +1,139 @@
 <script setup lang="ts">
 import { useIntersectionObserver } from '@vueuse/core'
-import { BRAND } from '~/config/brand'
 
 const sectionRef = ref<HTMLElement>()
 const visible = ref(false)
-
-const { stop } = useIntersectionObserver(sectionRef, ([{ isIntersecting }]) => {
-  if (isIntersecting) { visible.value = true; stop() }
+const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
+  if (entry?.isIntersecting) { visible.value = true; stop() }
 }, { threshold: 0.1 })
 
-const trustItems = [
+const poweredBy = [
   {
-    icon: 'lucide:hexagon',
-    title: 'Backed by Coinbase',
-    description: 'Runs on Coinbase\'s secure network. Low fees, fast processing.',
+    icon: 'lucide:route',
+    name: 'LI.FI',
+    role: 'Crosschain routing',
+    description: 'Routes your deposit from any chain through the optimal bridge and swap path directly into the vault — all in one transaction.',
+    color: 'text-brand-teal',
+    iconBg: 'bg-brand-teal/10',
+    border: 'border-brand-teal/15',
   },
   {
-    icon: 'lucide:lock',
-    title: 'Bank-grade security',
-    description: 'Your money is stored in audited, industry-standard savings programs.',
+    icon: 'lucide:landmark',
+    name: 'Morpho · Aave · Euler',
+    role: 'Yield vaults',
+    description: 'Your savings sit in audited, battle-tested DeFi lending protocols generating real yield from on-chain liquidity markets.',
+    color: 'text-brand-gold',
+    iconBg: 'bg-brand-gold/10',
+    border: 'border-brand-gold/15',
   },
   {
-    icon: 'lucide:key-round',
-    title: 'You\'re always in control',
-    description: 'We never hold your money. Only you can move or withdraw your funds.',
+    icon: 'lucide:fingerprint',
+    name: 'Privy',
+    role: 'Embedded wallets',
+    description: 'Creates a non-custodial smart wallet tied to your email — no MetaMask, no seed phrases, no setup. You own the keys.',
+    color: 'text-brand-sage',
+    iconBg: 'bg-brand-sage/10',
+    border: 'border-brand-sage/15',
   },
+]
+
+const guarantees = [
+  { icon: 'lucide:shield-check', label: 'Non-custodial', sub: 'Only you move your funds' },
+  { icon: 'lucide:file-check', label: 'Audited contracts', sub: 'Open-source, verifiable' },
+  { icon: 'lucide:search', label: 'On-chain transparent', sub: 'Verify every tx yourself' },
+  { icon: 'lucide:globe', label: 'Crosschain native', sub: '20+ chains supported' },
 ]
 </script>
 
 <template>
   <section ref="sectionRef" class="py-24 sm:py-32">
     <div class="max-w-6xl mx-auto px-5 sm:px-6 lg:px-8">
-      <!-- Section header -->
+
+      <!-- Header -->
       <div
         class="text-center mb-16 transition-all duration-700 ease-out"
         :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
       >
-        <p class="text-xs font-semibold text-muted-foreground uppercase tracking-[0.2em] mb-3">
-          Security
-        </p>
+        <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">Under the hood</p>
         <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-[-0.03em]">
-          Built for trust
+          Simple face.<br class="sm:hidden" /> Serious infrastructure.
         </h2>
+        <p class="mt-4 text-muted-foreground max-w-md mx-auto">
+          You see a savings goal. Behind it: institutional-grade DeFi protocols doing the heavy lifting.
+        </p>
       </div>
 
-      <!-- Trust items -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-8 lg:gap-12">
+      <!-- Powered by cards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-5 mb-8">
         <div
-          v-for="(item, i) in trustItems"
-          :key="item.title"
-          class="text-center transition-all duration-700 ease-out"
-          :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
-          :style="{ transitionDelay: visible ? `${200 + i * 120}ms` : '0ms' }"
+          v-for="(item, i) in poweredBy"
+          :key="item.name"
+          class="rounded-2xl bg-card border p-6 transition-all duration-700 ease-out"
+          :class="[
+            visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8',
+            item.border,
+          ]"
+          :style="{ transitionDelay: visible ? `${150 + i * 110}ms` : '0ms' }"
         >
           <div
-            class="w-14 h-14 rounded-2xl bg-white/4 border border-white/6
-                   flex items-center justify-center mx-auto mb-5"
+            class="w-11 h-11 rounded-xl flex items-center justify-center mb-5"
+            :class="item.iconBg"
           >
-            <Icon :name="item.icon" class="w-7 h-7 text-muted-foreground" />
+            <Icon :name="item.icon" class="w-5 h-5" :class="item.color" />
           </div>
-          <h3 class="font-semibold mb-2 text-foreground">{{ item.title }}</h3>
-          <p class="text-sm text-muted-foreground max-w-70 mx-auto leading-relaxed">
-            {{ item.description }}
+          <p class="text-xs font-semibold uppercase tracking-widest mb-1" :class="item.color">
+            {{ item.role }}
           </p>
+          <h3 class="font-bold text-foreground mb-3">{{ item.name }}</h3>
+          <p class="text-sm text-muted-foreground leading-relaxed">{{ item.description }}</p>
         </div>
       </div>
 
-      <!-- Bottom CTA -->
+      <!-- Security strip -->
       <div
-        class="mt-24 sm:mt-32 text-center transition-all duration-700 ease-out"
-        :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
-        :style="{ transitionDelay: visible ? '600ms' : '0ms' }"
+        class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-14 transition-all duration-700 ease-out"
+        :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'"
+        style="transition-delay: 480ms"
       >
-        <div class="w-16 h-px bg-primary/20 mx-auto mb-16" />
-
-        <h3 class="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-[-0.03em] mb-4">
-          Ready to grow your savings?
-        </h3>
-        <p class="text-muted-foreground mb-10 max-w-md mx-auto">
-          Join early users testing a simpler, smarter way to save onchain with {{ BRAND.name }}.
-        </p>
-        <button
-          class="inline-flex items-center justify-center h-12 px-8 text-base font-semibold
-                 rounded-full bg-primary text-white
-                 shadow-lg shadow-primary/25
-                 hover:bg-primary/80 hover:shadow-primary/35
-                 active:scale-[0.98] transition-all duration-200"
-          @click="navigateTo('/app')"
+        <div
+          v-for="g in guarantees"
+          :key="g.label"
+          class="flex items-center gap-3 p-4 rounded-xl bg-secondary/40 border border-border/50"
         >
-          Start with {{ BRAND.name }}
-          <Icon name="lucide:arrow-right" class="w-4 h-4 ml-2" />
-        </button>
+          <Icon :name="g.icon" class="w-4 h-4 text-primary/70 shrink-0" />
+          <div>
+            <p class="text-xs font-semibold text-foreground">{{ g.label }}</p>
+            <p class="text-[11px] text-muted-foreground/60">{{ g.sub }}</p>
+          </div>
+        </div>
       </div>
+
+      <!-- CTA card -->
+      <div
+        class="rounded-2xl bg-card border border-border p-10 sm:p-14 text-center relative overflow-hidden transition-all duration-700 ease-out"
+        :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
+        style="transition-delay: 600ms"
+      >
+        <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
+          <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-48 rounded-full bg-primary/8 blur-[80px]" />
+        </div>
+        <div class="relative z-10">
+          <h3 class="text-2xl sm:text-3xl font-bold tracking-[-0.03em] mb-4">
+            Ready to save smarter?
+          </h3>
+          <p class="text-muted-foreground mb-8 max-w-sm mx-auto">
+            Sign in with email. No crypto setup. First deposit is fee-free. Start in under a minute.
+          </p>
+          <button
+            class="inline-flex items-center gap-2 h-12 px-8 rounded-full bg-primary text-primary-foreground text-base font-semibold shadow-xl shadow-primary/30 hover:bg-primary/90 active:scale-[0.98] transition-all duration-200"
+            @click="navigateTo('/app')"
+          >
+            Create a pocket
+            <Icon name="lucide:arrow-right" class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
     </div>
   </section>
 </template>

@@ -3,7 +3,7 @@ import { BRAND } from '~/config/brand'
 import { STRATEGY_LIST } from '~/config/strategies'
 
 useHead({
-  title: `${BRAND.name} | Smart pockets on Base`,
+  title: `${BRAND.name} | Save smarter, from any chain`,
   meta: [
     { name: 'description', content: BRAND.description },
   ],
@@ -16,36 +16,37 @@ useHead({
       <LandingNav />
 
       <main>
+        <!-- 1. Hero — split layout, mock pocket card, chain badges -->
         <LandingHero />
 
-        <!-- Separator -->
-        <div class="w-full h-px bg-white/6" />
+        <div class="w-full h-px bg-border" />
 
+        <!-- 2. What is a pocket — visual goal cards -->
         <LandingFeatures />
 
-        <!-- Separator -->
-        <div class="w-full h-px bg-white/6" />
+        <div class="w-full h-px bg-border" />
 
-        <LandingStrategies :strategies="STRATEGY_LIST" />
-
-        <!-- Separator -->
-        <div class="w-full h-px bg-white/6" />
-
-        <LandingCalculator />
-
-        <!-- Separator -->
-        <div class="w-full h-px bg-white/6" />
-
+        <!-- 3. How it works — 3 numbered steps -->
         <LandingHowItWorks />
 
-        <!-- Separator -->
-        <div class="w-full h-px bg-white/6" />
+        <div class="w-full h-px bg-border" />
 
+        <!-- 4. Strategies — Conservative / Balanced / Aggressive -->
+        <LandingStrategies :strategies="STRATEGY_LIST" />
+
+        <div class="w-full h-px bg-border" />
+
+        <!-- 5. Calculator — see how much you could earn -->
+        <LandingCalculator />
+
+        <div class="w-full h-px bg-border" />
+
+        <!-- 6. Under the hood — LI.FI + protocols + Privy + security + CTA -->
         <LandingTrust />
 
-        <!-- Separator -->
-        <div class="w-full h-px bg-white/6" />
+        <div class="w-full h-px bg-border" />
 
+        <!-- 7. FAQ -->
         <LandingFAQ />
       </main>
 

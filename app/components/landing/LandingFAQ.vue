@@ -1,103 +1,107 @@
 <script setup lang="ts">
 import { useIntersectionObserver } from '@vueuse/core'
-import { BRAND } from '~/config/brand'
 
 const sectionRef = ref<HTMLElement>()
 const visible = ref(false)
-
-const { stop } = useIntersectionObserver(sectionRef, ([{ isIntersecting }]) => {
-  if (isIntersecting) { visible.value = true; stop() }
+const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
+  if (entry?.isIntersecting) { visible.value = true; stop() }
 }, { threshold: 0.1 })
 
 const openIndex = ref<number | null>(null)
-
 function toggle(i: number) {
   openIndex.value = openIndex.value === i ? null : i
 }
 
 const faqs = [
   {
-    question: 'What happens in a market crash?',
-    answer: 'Depends on your plan. Savings (USDC) stays stable, maybe a small ~2% dip. Growth (Bitcoin) and High Growth (Ethereum) follow the market, so if crypto drops 20%, your balance could drop 20-30% too. That\'s why we match your plan to your risk comfort. You\'re never locked in. Switch or withdraw anytime.',
+    q: 'What exactly is a pocket?',
+    a: 'A pocket is a savings container tied to a specific goal — like "Vacation Fund" or "Emergency Fund". Each one has a name, a target amount, a timeline, and its own growth strategy. You can have as many pockets as you want, and they all run independently.',
   },
   {
-    question: 'What if APY drops?',
-    answer: 'APY is variable. It goes up and down based on market conditions. We show you real-time rates and historical stability so there are no surprises. If rates drop, you can switch strategies or withdraw. No penalty.',
+    q: 'Do I need a crypto wallet to sign up?',
+    a: 'No. You sign in with your email (or Google). Auren creates an embedded smart wallet for you automatically using Privy. You never see a seed phrase or need to install anything.',
   },
   {
-    question: 'What happens if I withdraw early?',
-    answer: 'Nothing bad. No lock-ups, no penalties, no exit fees. You can withdraw 100% of your funds at any time. Whatever yield you\'ve earned up to that point is yours to keep.',
+    q: 'What does "fee-free first deposit" mean?',
+    a: 'Crosschain transactions require a small gas fee. For your first deposit, Auren covers that fee on your behalf through a paymaster. You just deposit your savings — we handle the gas.',
   },
   {
-    question: 'Is my money safe?',
-    answer: 'Your funds sit in audited, non-custodial vaults on the Base network (built by Coinbase). We never hold your money. Only you can move or withdraw it. Every transaction is transparent and verifiable on BaseScan. That said, DeFi carries smart contract risk. Only save what you can afford to lose.',
+    q: 'Which chains and tokens can I deposit from?',
+    a: 'You can deposit from Ethereum, Arbitrum, Optimism, Polygon, BNB Chain, Avalanche, and more. Any ERC-20 token is accepted — Auren uses Enso Finance to auto-route a swap from whatever you deposit into the strategy\'s underlying asset. You don\'t need to manually bridge or swap anything.',
   },
   {
-    question: 'How is this different from a bank?',
-    answer: `${BRAND.name} gives you a cleaner path into transparent onchain yield. You keep full custody, you can inspect the rails, and your first steps can feel closer to a modern finance app than raw DeFi. The trade-off is still the same: returns are variable, not insured, and smart contract risk exists.`,
+    q: 'Can I lose money?',
+    a: 'Yes. The Conservative strategy (USDC) is the most stable — yield can fluctuate but your principal rarely drops. Balanced (Bitcoin) and Aggressive (Ethereum) follow crypto prices, so they can drop significantly in a downturn. Only save what you\'re comfortable with at each risk level.',
   },
   {
-    question: 'Do I need crypto experience?',
-    answer: 'Nope. Sign in with your email. No wallet or crypto knowledge needed. We handle the technical stuff. You just pick a savings plan and add money.',
+    q: 'Can I withdraw whenever I want?',
+    a: 'Always. There are no lock-up periods, no exit fees, and no waiting periods. Withdraw part of it, all of it, or close the pocket entirely — whenever you want. The yield you\'ve earned stays yours.',
+  },
+  {
+    q: 'Can I switch strategies after I create a pocket?',
+    a: 'Yes. You can switch a pocket from Conservative to Balanced or Aggressive (and vice versa) at any time from the pocket detail page. The switch rebalances in a single transaction.',
+  },
+  {
+    q: 'Is Auren safe?',
+    a: 'Your funds sit in audited, non-custodial smart contracts. Auren never has custody of your money — only your wallet can move it. Every transaction is verifiable on-chain with any block explorer. That said, DeFi always carries smart contract risk. Only save amounts you\'re comfortable with.',
   },
 ]
 </script>
 
 <template>
   <section ref="sectionRef" class="py-24 sm:py-32">
-    <div class="max-w-3xl mx-auto px-5 sm:px-6 lg:px-8">
-      <!-- Section header -->
+    <div class="max-w-2xl mx-auto px-5 sm:px-6 lg:px-8">
+
+      <!-- Header -->
       <div
-        class="text-center mb-16 transition-all duration-700 ease-out"
+        class="text-center mb-14 transition-all duration-700 ease-out"
         :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
       >
-        <p class="text-xs font-semibold text-muted-foreground uppercase tracking-[0.2em] mb-3">
-          Honest answers
-        </p>
-        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-[-0.03em]">
-          What you should know
-        </h2>
-        <p class="mt-4 text-muted-foreground text-base max-w-xl mx-auto">
-          We believe in transparency. Here's what most apps won't tell you.
+        <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">FAQ</p>
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-[-0.03em]">Common questions</h2>
+        <p class="mt-4 text-muted-foreground">
+          Straight answers about how Auren works.
         </p>
       </div>
 
-      <!-- FAQ items -->
-      <div class="space-y-3">
+      <!-- Items -->
+      <div class="space-y-2">
         <div
           v-for="(faq, i) in faqs"
           :key="i"
-          class="rounded-2xl border border-white/6 bg-white/3 overflow-hidden transition-all duration-500"
+          class="rounded-xl border overflow-hidden transition-all duration-500"
           :class="[
-            visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8',
-            openIndex === i ? 'bg-white/5 border-white/10' : 'hover:bg-white/4 hover:border-white/8',
+            visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6',
+            openIndex === i
+              ? 'bg-card border-border'
+              : 'bg-card/50 border-border/60 hover:border-border hover:bg-card',
           ]"
-          :style="{ transitionDelay: visible ? `${200 + i * 80}ms` : '0ms' }"
+          :style="{ transitionDelay: visible ? `${130 + i * 60}ms` : '0ms' }"
         >
           <button
-            class="w-full flex items-center justify-between gap-4 p-5 sm:p-6 text-left"
+            class="w-full flex items-center justify-between gap-4 px-5 py-4 text-left"
             @click="toggle(i)"
           >
-            <span class="font-semibold text-sm sm:text-base text-foreground">{{ faq.question }}</span>
+            <span class="font-medium text-sm sm:text-base text-foreground">{{ faq.q }}</span>
             <Icon
               name="lucide:chevron-down"
-              class="w-5 h-5 text-muted-foreground shrink-0 transition-transform duration-300"
-              :class="openIndex === i ? 'rotate-180' : ''"
+              class="w-4 h-4 text-muted-foreground shrink-0 transition-transform duration-300"
+              :class="openIndex === i ? 'rotate-180 text-primary' : ''"
             />
           </button>
-
           <div
             class="grid transition-all duration-300 ease-out"
             :class="openIndex === i ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'"
           >
             <div class="overflow-hidden">
-              <p class="px-5 sm:px-6 pb-5 sm:pb-6 text-sm text-muted-foreground leading-relaxed">
-                {{ faq.answer }}
+              <p class="px-5 pt-2 pb-5 text-sm text-muted-foreground leading-relaxed border-t border-border/40">
+                {{ faq.a }}
               </p>
             </div>
           </div>
         </div>
       </div>
+
     </div>
   </section>
 </template>

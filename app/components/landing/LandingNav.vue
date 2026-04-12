@@ -3,40 +3,31 @@ import { BRAND } from '~/config/brand'
 
 const scrolled = ref(false)
 
-function onScroll() {
-  scrolled.value = window.scrollY > 20
-}
-
 onMounted(() => {
-  window.addEventListener('scroll', onScroll, { passive: true })
-})
-
-onUnmounted(() => {
-  window.removeEventListener('scroll', onScroll)
+  const handler = () => { scrolled.value = window.scrollY > 20 }
+  window.addEventListener('scroll', handler, { passive: true })
+  onUnmounted(() => window.removeEventListener('scroll', handler))
 })
 </script>
 
 <template>
   <header
-    class="fixed top-0 inset-x-0 z-50 transition-all duration-500"
-    :class="scrolled
-      ? 'bg-background/80 backdrop-blur-xl border-b border-white/6'
-      : ''"
+    class="fixed top-0 inset-x-0 z-50 transition-all duration-300"
+    :class="scrolled ? 'bg-background/85 backdrop-blur-xl border-b border-border py-3' : 'py-5'"
   >
-    <nav class="max-w-6xl mx-auto px-5 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <NuxtLink to="/" class="flex items-center gap-2.5">
-        <img src="/logo.png" :alt="BRAND.name" class="w-9 h-9" />
+    <div class="max-w-6xl mx-auto px-5 sm:px-6 lg:px-8 flex items-center justify-between">
+      <NuxtLink to="/" class="flex items-center gap-2.5 group">
+        <img src="/new.jpeg" :alt="BRAND.name" class="w-9 h-9 rounded-xl object-cover" />
         <span class="text-lg font-bold tracking-tight text-foreground">{{ BRAND.name }}</span>
       </NuxtLink>
 
-      <Button
-        size="sm"
-        class="rounded-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 hover:border-primary/30 backdrop-blur-sm"
+      <button
+        class="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 active:scale-95 transition-all duration-200 shadow-lg shadow-primary/20"
         @click="navigateTo('/app')"
       >
-        Launch App
-        <Icon name="lucide:arrow-right" class="w-3.5 h-3.5 ml-1" />
-      </Button>
-    </nav>
+        Open App
+        <Icon name="lucide:arrow-right" class="w-3.5 h-3.5" />
+      </button>
+    </div>
   </header>
 </template>

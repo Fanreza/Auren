@@ -4,9 +4,9 @@ import { BRAND } from "~/config/brand";
 import { usePrivyAuth } from "~/composables/usePrivy";
 import { useProfileStore } from "~/stores/useProfileStore";
 
-const { isConnected, address, loginMethod, logout } = usePrivyAuth();
+const { isConnected, address, loginMethod, logout, eoaWalletAddress } = usePrivyAuth();
 const profileStore = useProfileStore();
-const { ensName, customName } = storeToRefs(profileStore);
+const { customName } = storeToRefs(profileStore);
 
 const editingName = ref(false);
 const nameInput = ref("");
@@ -170,20 +170,16 @@ function truncate(addr: string) {
 					<Badge variant="secondary" class="mt-2 font-mono text-xs">
 						{{ truncate(address) }}
 					</Badge>
+					<div v-if="eoaWalletAddress && eoaWalletAddress !== address" class="flex items-center gap-1.5 mt-2">
+						<Icon name="lucide:key-round" class="w-3 h-3 text-muted-foreground/60" />
+						<span class="text-[11px] text-muted-foreground/60">Signer</span>
+						<Badge variant="outline" class="font-mono text-[10px] h-5 text-muted-foreground/60">
+							{{ truncate(eoaWalletAddress) }}
+						</Badge>
+					</div>
 				</div>
 
 				<div class="space-y-4">
-					<!-- ENS Identity -->
-					<Card v-if="ensName">
-						<CardContent class="p-4">
-							<div class="flex items-center gap-2 mb-1">
-								<Icon name="lucide:at-sign" class="w-4 h-4 text-muted-foreground" />
-								<p class="text-sm font-medium">Web Identity</p>
-							</div>
-							<p class="text-sm text-muted-foreground">{{ ensName }}</p>
-						</CardContent>
-					</Card>
-
 					<!-- Display Name -->
 					<Card>
 						<CardContent class="p-4">
@@ -367,4 +363,5 @@ function truncate(addr: string) {
 			</template>
 		</div>
 	</div>
+	<LandingFooter />
 </template>

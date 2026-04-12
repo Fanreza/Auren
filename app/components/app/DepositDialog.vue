@@ -2,8 +2,9 @@
 import { parseUnits, formatUnits } from 'viem'
 import { STRATEGIES, type StrategyKey } from '~/config/strategies'
 import type { DbPocket } from '~/types/database'
-import type { TxState } from '~/composables/useVault'
-import type { ZapQuote } from '~/composables/useEnso'
+import type { TxState, CrossChainStatus } from '~/composables/useVault'
+import type { LifiQuote } from '~/composables/useLifi'
+import { LIFI_SUPPORTED_CHAINS } from '~/composables/useLifi'
 import type { WalletToken } from '~/composables/useWalletTokens'
 import { useVault } from '~/composables/useVault'
 
@@ -18,24 +19,27 @@ const props = defineProps<{
   loadingTokens: boolean
   loadingPosition: boolean
   fetchingQuote: boolean
-  zapQuote: ZapQuote | null
+  lifiQuote: LifiQuote | null
   nativeToken: string
   assetPrice: number
-  withdrawZapQuote: ZapQuote | null
-  fetchingWithdrawQuote: boolean
-  isDirectWithdraw: boolean
+  // LI.FI crosschain
+  fromChain: number
+  lifiVaultChainId: number | null
+  crossChainStatus: CrossChainStatus
+  crossChainTxHash: `0x${string}` | null
+  useLifiForDeposit: boolean
 }>()
 
 const open = defineModel<boolean>('open', { required: true })
 
 const emit = defineEmits<{
   deposit: [payload: { tokenIn: `0x${string}`; amount: string; isDirect: boolean }]
-  withdraw: [payload: { amount: string; tokenOut?: `0x${string}` }]
+  withdraw: [payload: { amount: string }]
   reset: []
   fetchTokens: []
   fetchPosition: []
   selectToken: [token: `0x${string}`]
-  selectWithdrawToken: [token: `0x${string}`]
+  selectFromChain: [chainId: number]
   updateAmount: [amount: string]
   changeMode: [mode: 'deposit' | 'withdraw']
 }>()
@@ -45,7 +49,6 @@ const mode = ref<'deposit' | 'withdraw'>('deposit')
 const view = ref<'select-token' | 'amount'>('select-token')
 const amount = ref('')
 const selectedTokenAddr = ref<`0x${string}` | null>(null)
-const selectedWithdrawTokenAddr = ref<`0x${string}` | null>(null)
 const tokenSearch = ref('')
 
 // ---- Computed ----
@@ -75,13 +78,6 @@ const selectedTokenBalance = computed<WalletToken | null>(() => {
   if (!selectedTokenAddr.value) return null
   return props.walletTokens.find(
     t => t.token?.toLowerCase() === selectedTokenAddr.value?.toLowerCase(),
-  ) ?? null
-})
-
-const selectedWithdrawTokenInfo = computed<WalletToken | null>(() => {
-  if (!selectedWithdrawTokenAddr.value) return null
-  return props.walletTokens.find(
-    t => t.token?.toLowerCase() === selectedWithdrawTokenAddr.value?.toLowerCase(),
   ) ?? null
 })
 
@@ -130,13 +126,52 @@ const parsedAmount = computed(() => {
 const canSubmit = computed(() => {
   if (props.txState !== 'idle') return false
   if (!amount.value) return false
-  if (mode.value === 'withdraw') {
-    if (parsedAmount.value === 0n) return false
-    if (selectedWithdrawTokenAddr.value && !props.isDirectWithdraw) return !!props.withdrawZapQuote
-    return true
+  if (mode.value === 'withdraw') return parsedAmount.value > 0n
+  if (props.useLifiForDeposit) return !!(props.lifiQuote || parsedAmount.value > 0n)
+  return isDirectDeposit.value ? parsedAmount.value > 0n : false
+})
+
+// LI.FI chain helpers
+const fromChainInfo = computed(() =>
+  LIFI_SUPPORTED_CHAINS.find(c => c.id === props.fromChain) ?? null,
+)
+
+const toChainInfo = computed(() =>
+  LIFI_SUPPORTED_CHAINS.find(c => c.id === props.lifiVaultChainId) ?? null,
+)
+
+// Multi-chain explorer link for tx hash
+function explorerLink(txHash: string, chainId: number): string {
+  const explorers: Record<number, string> = {
+    1: 'https://etherscan.io/tx/',
+    42161: 'https://arbiscan.io/tx/',
+    10: 'https://optimistic.etherscan.io/tx/',
+    137: 'https://polygonscan.com/tx/',
+    8453: 'https://basescan.org/tx/',
+    56: 'https://bscscan.com/tx/',
+    43114: 'https://snowtrace.io/tx/',
   }
-  if (isDirectDeposit.value) return parsedAmount.value > 0n
-  return !!props.zapQuote
+  const base = explorers[chainId] ?? 'https://blockscan.com/tx/'
+  return base + txHash
+}
+
+// Estimated output from LI.FI quote
+const lifiEstimatedOut = computed(() => {
+  if (!props.lifiQuote?.estimate?.toAmountUSD) return null
+  const usd = parseFloat(props.lifiQuote.estimate.toAmountUSD)
+  if (isNaN(usd) || usd === 0) return null
+  return '$' + usd.toFixed(2)
+})
+
+const lifiExecutionTime = computed(() => {
+  const secs = props.lifiQuote?.estimate?.executionDuration
+  if (!secs) return null
+  if (secs < 60) return `~${secs}s`
+  return `~${Math.round(secs / 60)}m`
+})
+
+const lifiBridgeName = computed(() => {
+  return props.lifiQuote?.toolDetails?.name ?? props.lifiQuote?.tool ?? null
 })
 
 // ---- Preview estimates ----
@@ -241,6 +276,10 @@ function selectToken(token: WalletToken) {
   emit('selectToken', token.token as `0x${string}`)
 }
 
+function handleSelectFromChain(chainId: number) {
+  emit('selectFromChain', chainId)
+}
+
 function autoSelectToken() {
   if (mode.value !== 'deposit') return
   if (props.walletTokens.length === 0) return
@@ -279,19 +318,11 @@ function setWithdrawPercent(pct: number) {
   amount.value = formatUnits(portion, strategy.value.decimals)
 }
 
-function selectWithdrawToken(token: WalletToken) {
-  selectedWithdrawTokenAddr.value = token.token as `0x${string}`
-  amount.value = ''
-  view.value = 'amount'
-  emit('selectWithdrawToken', token.token as `0x${string}`)
-}
-
 function resetForm() {
   mode.value = 'deposit'
   view.value = 'select-token'
   amount.value = ''
   selectedTokenAddr.value = null
-  selectedWithdrawTokenAddr.value = null
   tokenSearch.value = ''
 }
 
@@ -306,7 +337,6 @@ function switchMode(newMode: 'deposit' | 'withdraw') {
   mode.value = newMode
   amount.value = ''
   selectedTokenAddr.value = null
-  selectedWithdrawTokenAddr.value = null
   view.value = newMode === 'withdraw' ? 'amount' : 'select-token'
   emit('changeMode', newMode)
   emit('reset')
@@ -319,10 +349,7 @@ function handleAction() {
     return
   }
   if (mode.value === 'withdraw') {
-    emit('withdraw', {
-      amount: amount.value,
-      tokenOut: selectedWithdrawTokenAddr.value || undefined,
-    })
+    emit('withdraw', { amount: amount.value })
   } else {
     emit('deposit', {
       tokenIn: selectedTokenAddr.value!,
@@ -334,7 +361,7 @@ function handleAction() {
 
 watch(amount, (v) => emit('updateAmount', v))
 
-function openFor(pocket: DbPocket, openMode: 'deposit' | 'withdraw' = 'deposit') {
+function openFor(_pocket: DbPocket, openMode: 'deposit' | 'withdraw' = 'deposit') {
   mode.value = openMode
   view.value = 'amount'
   amount.value = ''
@@ -390,6 +417,24 @@ defineExpose({ openFor })
         <!-- ===== VIEW: SELECT TOKEN (deposit mode) ===== -->
         <div v-if="mode === 'deposit' && view === 'select-token'" class="px-5 pb-5">
           <p class="text-sm font-medium text-center mb-3">What do you want to deposit?</p>
+
+          <!-- Chain selector -->
+          <div v-if="useLifiForDeposit" class="mb-4">
+            <p class="text-xs font-medium text-muted-foreground mb-2">From chain</p>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="chain in LIFI_SUPPORTED_CHAINS"
+                :key="chain.id"
+                class="px-3 py-1.5 rounded-full text-xs font-semibold border transition-all"
+                :class="fromChain === chain.id
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border/60 text-muted-foreground hover:border-primary/30 hover:bg-primary/5'"
+                @click="handleSelectFromChain(chain.id)"
+              >
+                {{ chain.name }}
+              </button>
+            </div>
+          </div>
 
           <!-- Search -->
           <div class="relative mb-4">
@@ -480,7 +525,7 @@ defineExpose({ openFor })
                         Fastest
                       </span>
                     </div>
-                    <p class="text-[11px] text-muted-foreground">on Base</p>
+                    <p class="text-[11px] text-muted-foreground">{{ fromChainInfo?.name ?? 'Wallet' }}</p>
                   </div>
                   <div class="text-right shrink-0">
                     <p class="text-sm font-semibold">{{ formatUsd(token.usdValue) }}</p>
@@ -538,7 +583,7 @@ defineExpose({ openFor })
                 </div>
                 <div class="text-left">
                   <p class="text-sm font-semibold">{{ selectedTokenBalance.symbol }}</p>
-                  <p class="text-[11px] text-muted-foreground">Base</p>
+                  <p class="text-[11px] text-muted-foreground">{{ fromChainInfo?.name ?? 'Wallet' }}</p>
                 </div>
                 <Icon name="lucide:chevron-down" class="w-4 h-4 text-muted-foreground" />
               </button>
@@ -660,39 +705,6 @@ defineExpose({ openFor })
               </button>
             </div>
 
-            <!-- Withdraw to token selector -->
-            <div v-if="!loadingPosition && position.shares > 0n">
-              <p class="text-xs font-medium text-muted-foreground mb-2">Get paid in</p>
-              <div class="flex gap-2 flex-wrap">
-                <button
-                  class="flex items-center gap-2 px-3.5 min-h-10 rounded-xl border transition-all"
-                  :class="!selectedWithdrawTokenAddr ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/30 hover:bg-primary/5'"
-                  :disabled="txState !== 'idle'"
-                  @click="selectedWithdrawTokenAddr = null; emit('selectWithdrawToken', strategy!.assetAddress as `0x${string}`)"
-                >
-                  <span class="text-sm font-medium">{{ strategy!.assetSymbol }}</span>
-                  <span class="text-[10px] text-muted-foreground">Default</span>
-                </button>
-                <button
-                  v-for="t in availableTokens.filter(tok => !isDirectToken(tok.token)).slice(0, 5)"
-                  :key="t.token"
-                  class="flex items-center gap-2 px-3.5 min-h-10 rounded-xl border transition-all"
-                  :class="selectedWithdrawTokenAddr?.toLowerCase() === t.token.toLowerCase() ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/30 hover:bg-primary/5'"
-                  :disabled="txState !== 'idle'"
-                  @click="selectWithdrawToken(t)"
-                >
-                  <img
-                    v-if="t.logoUri"
-                    :src="t.logoUri"
-                    :alt="t.symbol"
-                    class="w-4 h-4 rounded-full"
-                    @error="($event.target as HTMLImageElement).style.display = 'none'"
-                  >
-                  <span class="text-sm font-medium">{{ t.symbol }}</span>
-                </button>
-              </div>
-            </div>
-
             <!-- No balance notice -->
             <p v-if="!loadingPosition && position.shares === 0n" class="text-sm text-muted-foreground text-center py-4">
               You haven't deposited yet. Add money first to start earning.
@@ -711,9 +723,9 @@ defineExpose({ openFor })
             </span>
           </div>
 
-          <!-- Preview estimate (withdraw - direct) -->
+          <!-- Preview estimate (withdraw) -->
           <div
-            v-if="mode === 'withdraw' && isDirectWithdraw && previewFormatted && txState === 'idle'"
+            v-if="mode === 'withdraw' && previewFormatted && txState === 'idle'"
             class="p-3 bg-muted/60 rounded-xl flex items-center justify-between"
           >
             <span class="text-xs text-muted-foreground">You'll get approximately</span>
@@ -723,38 +735,51 @@ defineExpose({ openFor })
             </span>
           </div>
 
-          <!-- Zap withdraw estimate -->
+          <!-- LI.FI route preview -->
           <div
-            v-if="withdrawZapQuote && !isDirectWithdraw && mode === 'withdraw'"
-            class="p-3 bg-muted/60 rounded-xl flex items-center justify-between"
+            v-if="lifiQuote && useLifiForDeposit && mode === 'deposit'"
+            class="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-2.5"
           >
-            <span class="text-xs text-muted-foreground">You'll get approximately</span>
-            <span class="text-sm font-medium font-mono">
-              ~{{ displayNum(formatUnits(BigInt(withdrawZapQuote.amountOut), selectedWithdrawTokenInfo?.decimals ?? 18), 4) }}
-              {{ selectedWithdrawTokenInfo?.symbol }}
-            </span>
-          </div>
+            <!-- Estimated output -->
+            <div v-if="lifiEstimatedOut" class="flex items-center justify-between">
+              <span class="text-xs text-muted-foreground">You'll receive approximately</span>
+              <span class="text-sm font-semibold text-primary font-mono">{{ lifiEstimatedOut }}</span>
+            </div>
 
-          <div v-if="fetchingWithdrawQuote" class="flex items-center justify-center gap-2 text-xs text-muted-foreground py-1">
-            <Icon name="lucide:loader-2" class="w-3.5 h-3.5 animate-spin" />
-            Calculating...
-          </div>
+            <!-- Route details row -->
+            <div class="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground/70">
+              <!-- From chain -->
+              <span v-if="fromChainInfo" class="px-2 py-0.5 rounded-full bg-secondary border border-border/50 font-medium">
+                {{ fromChainInfo.name }}
+              </span>
+              <Icon name="lucide:arrow-right" class="w-3 h-3 shrink-0" />
+              <!-- Bridge/tool -->
+              <span v-if="lifiBridgeName" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary border border-border/50 font-medium">
+                <Icon name="lucide:zap" class="w-2.5 h-2.5 text-primary" />
+                {{ lifiBridgeName }}
+              </span>
+              <Icon name="lucide:arrow-right" class="w-3 h-3 shrink-0" />
+              <!-- To chain -->
+              <span v-if="toChainInfo" class="px-2 py-0.5 rounded-full bg-secondary border border-border/50 font-medium">
+                {{ toChainInfo.name }}
+              </span>
+              <!-- ETA -->
+              <span v-if="lifiExecutionTime" class="ml-auto flex items-center gap-1">
+                <Icon name="lucide:clock" class="w-2.5 h-2.5" />
+                {{ lifiExecutionTime }}
+              </span>
+            </div>
 
-          <!-- Zap deposit estimate -->
-          <div
-            v-if="zapQuote && !isDirectDeposit && mode === 'deposit'"
-            class="p-3 bg-muted/60 rounded-xl flex items-center justify-between"
-          >
-            <span class="text-xs text-muted-foreground">You'll get approximately</span>
-            <span class="text-sm font-medium font-mono">
-              ~{{ displayNum(formatUnits(BigInt(zapQuote.amountOut), strategy?.decimals ?? 18), 4) }}
-              {{ strategy?.vaultSymbol }}
-            </span>
+            <!-- Powered by -->
+            <div class="flex items-center gap-1 text-[10px] text-muted-foreground/40">
+              <Icon name="lucide:route" class="w-2.5 h-2.5" />
+              Routed by LI.FI
+            </div>
           </div>
 
           <div v-if="fetchingQuote" class="flex items-center justify-center gap-2 text-xs text-muted-foreground py-1">
             <Icon name="lucide:loader-2" class="w-3.5 h-3.5 animate-spin" />
-            Calculating...
+            Finding best route...
           </div>
 
           <!-- Confetti on success -->
@@ -829,14 +854,58 @@ defineExpose({ openFor })
 
             <a
               v-if="txHash"
-              :href="`https://basescan.org/tx/${txHash}`"
+              :href="explorerLink(txHash, fromChain)"
               target="_blank"
               rel="noopener"
               class="inline-flex items-center gap-1 text-xs text-primary hover:underline"
             >
-              View receipt
+              View on {{ fromChainInfo?.name ?? 'Explorer' }}
               <Icon name="lucide:external-link" class="w-3 h-3" />
             </a>
+
+            <!-- Crosschain bridging status -->
+            <div v-if="crossChainStatus !== 'idle'" class="mt-2 rounded-xl border p-3 space-y-2"
+              :class="{
+                'border-amber-500/30 bg-amber-500/5': crossChainStatus === 'bridging',
+                'border-primary/30 bg-primary/5': crossChainStatus === 'done',
+                'border-destructive/30 bg-destructive/5': crossChainStatus === 'failed',
+                'border-yellow-500/30 bg-yellow-500/5': crossChainStatus === 'partial',
+              }"
+            >
+              <div class="flex items-center gap-2 text-xs font-medium">
+                <Icon
+                  :name="crossChainStatus === 'bridging' ? 'lucide:loader-2' : crossChainStatus === 'done' ? 'lucide:check-circle' : crossChainStatus === 'partial' ? 'lucide:alert-circle' : 'lucide:x-circle'"
+                  class="w-3.5 h-3.5 shrink-0"
+                  :class="{
+                    'animate-spin text-amber-400': crossChainStatus === 'bridging',
+                    'text-primary': crossChainStatus === 'done',
+                    'text-destructive': crossChainStatus === 'failed',
+                    'text-yellow-400': crossChainStatus === 'partial',
+                  }"
+                />
+                <span :class="{
+                  'text-amber-400': crossChainStatus === 'bridging',
+                  'text-primary': crossChainStatus === 'done',
+                  'text-destructive': crossChainStatus === 'failed',
+                  'text-yellow-400': crossChainStatus === 'partial',
+                }">
+                  {{ crossChainStatus === 'bridging' ? 'Bridging to ' + (toChainInfo?.name ?? 'destination') + '…'
+                     : crossChainStatus === 'done' ? 'Bridge complete'
+                     : crossChainStatus === 'partial' ? 'Partially bridged — check explorer'
+                     : 'Bridge failed' }}
+                </span>
+              </div>
+              <a
+                v-if="crossChainTxHash && lifiVaultChainId"
+                :href="explorerLink(crossChainTxHash, lifiVaultChainId)"
+                target="_blank"
+                rel="noopener"
+                class="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                View on {{ toChainInfo?.name ?? 'destination chain' }}
+                <Icon name="lucide:external-link" class="w-3 h-3" />
+              </a>
+            </div>
           </div>
 
           <!-- Trust micro-copy -->

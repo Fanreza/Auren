@@ -54,37 +54,25 @@ export function useTour() {
         },
       },
       {
-        element: '[data-tour="total-balance"]',
-        popover: {
-          title: 'Your total balance',
-          description: 'All your pockets combined. Updates in real time as your savings grow.',
-        },
-      },
-      {
         element: '[data-tour="create-pocket"]',
         popover: {
           title: 'Create a pocket',
-          description: 'Start here! Give it a name, pick a strategy, and deposit to start earning.',
+          description: 'Give it a name, pick a strategy, and start earning. Takes 30 seconds.',
+          side: 'bottom',
         },
       },
       {
         element: '[data-tour="fund-wallet"]',
         popover: {
           title: 'Add funds',
-          description: 'Need money in your wallet? Buy crypto with a card or bank transfer.',
-        },
-      },
-      {
-        element: '[data-tour="learn-link"]',
-        popover: {
-          title: 'Not sure how it works?',
-          description: 'Simple explanations with no jargon — check it out anytime.',
+          description: 'Buy crypto with a card or bank transfer directly into your wallet.',
+          side: 'bottom',
         },
       },
       {
         popover: {
           title: 'You\'re all set!',
-          description: 'Create your first pocket and start earning. Withdraw anytime — no penalties.',
+          description: 'Create your first pocket and start earning. Withdraw anytime — no lock-ups.',
         },
       },
     ], 1500)

@@ -17,6 +17,7 @@ import {
 import { base } from 'viem/chains'
 import { BRAND } from '~/config/brand'
 import { getPrivy } from '~/config/privy'
+import { buildSmartAccountClient } from '~/composables/useSmartAccount'
 
 // ---- Module-level shared state (singleton across all consumers) ----
 const isReady = ref(false)
@@ -26,6 +27,11 @@ const address = ref<`0x${string}` | undefined>()
 const privyUser = ref<User | null>(null)
 const loginMethod = ref<string | null>(null)
 const isMiniApp = ref(false)
+
+// Smart account state — set when wallet is wrapped in ERC-4337 smart account
+const smartAccountAddress = ref<`0x${string}` | undefined>()
+// EOA address (the original signer) — useful for "transfer from EOA" flows
+const eoaWalletAddress = ref<`0x${string}` | undefined>()
 // Auto-persist loginMethod to localStorage
 watch(loginMethod, (val) => {
   if (val) localStorage.setItem(`${BRAND.storagePrefix}_login_method`, val)
@@ -40,6 +46,7 @@ let _walletClient: WalletClient | null = null
 let _publicClient: PublicClient | null = null
 let _embeddedProvider: EIP1193Provider | null = null
 let _externalProvider: any = null
+let _smartAccountClient: any = null
 
 export function usePrivyAuth() {
   const privy = getPrivy()
@@ -153,9 +160,72 @@ export function usePrivyAuth() {
     } as EIP1193Provider
   }
 
+  // ---- Smart account (ERC-4337 + gas sponsorship for ALL wallet types) ----
+  const isSmartAccount = computed(() => !!smartAccountAddress.value)
+
+  async function initSmartAccount() {
+    const config = useRuntimeConfig()
+    const pimlicoApiKey = (config.public.pimlicoApiKey as string)?.trim()
+    if (!pimlicoApiKey) return
+
+    try {
+      let signerClient: WalletClient
+      let eoaAddress: `0x${string}`
+
+      const embeddedWallet = privyUser.value ? getUserEmbeddedEthereumWallet(privyUser.value) : null
+
+      if (embeddedWallet) {
+        // Embedded wallet signer
+        const entropy = getEntropyDetailsFromUser(privyUser.value!)
+        if (!entropy) return
+
+        const provider = await privy.embeddedWallet.getEthereumProvider({
+          wallet: embeddedWallet,
+          entropyId: entropy.entropyId,
+          entropyIdVerifier: entropy.entropyIdVerifier,
+        })
+
+        eoaAddress = embeddedWallet.address as `0x${string}`
+        signerClient = createWalletClient({
+          account: eoaAddress,
+          chain: base,
+          transport: custom(provider),
+        })
+      } else if (_externalProvider && address.value) {
+        // External wallet signer (MetaMask, Coinbase, WalletConnect, etc.)
+        eoaAddress = address.value
+        signerClient = createWalletClient({
+          account: eoaAddress,
+          chain: base,
+          transport: custom(_externalProvider),
+        })
+      } else {
+        return // No wallet available
+      }
+
+      const rpcUrl = (config.public.baseRpcUrl as string)?.trim() || ''
+      const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`
+      const result = await buildSmartAccountClient(signerClient, 8453, USDC_BASE, rpcUrl, pimlicoApiKey)
+
+      _smartAccountClient = result.smartAccountClient
+      smartAccountAddress.value = result.smartAddress
+      eoaWalletAddress.value = eoaAddress
+      // Smart account is the canonical address for ALL wallet types
+      address.value = result.smartAddress
+      console.log('[usePrivy] Smart account ready:', result.smartAddress, '(owner:', eoaAddress, ')')
+    } catch (e) {
+      console.warn('[usePrivy] Smart account init failed, using EOA:', e)
+      _smartAccountClient = null
+      smartAccountAddress.value = undefined
+    }
+  }
+
   // ---- Wallet client (write operations) ----
-  async function getWalletClient(): Promise<WalletClient> {
+  async function getWalletClient(): Promise<WalletClient | any> {
     if (!address.value) throw new Error('Not authenticated')
+
+    // Return cached smart account client for embedded wallet users (gas-sponsored)
+    if (_smartAccountClient) return _smartAccountClient
 
     // External providers can be cached safely
     if (_walletClient && _externalProvider) return _walletClient
@@ -268,9 +338,12 @@ export function usePrivyAuth() {
         // Restore login method from localStorage
         loginMethod.value = localStorage.getItem(`${BRAND.storagePrefix}_login_method`)
 
-        // Re-establish external provider for wallet users (SIWE login)
-        if (!getUserEmbeddedEthereumWallet(user) && address.value) {
+        if (getUserEmbeddedEthereumWallet(user)) {
+          await initSmartAccount()
+        } else if (address.value) {
+          // Re-establish external provider, then wrap in smart account for paymaster
           reconnectExternalProvider()
+          await initSmartAccount()
         }
       }
     } catch {
@@ -435,6 +508,7 @@ export function usePrivyAuth() {
   // ---- Auth: External wallet via SIWE (shared helper) ----
   async function siweLogin(provider: any, method: string, rdns?: string) {
     const accounts: string[] = await provider.request({ method: 'eth_requestAccounts' })
+    if (!accounts[0]) throw new Error('No account returned from wallet')
     const walletAddress = getAddress(accounts[0]) as `0x${string}`
 
     const { message } = await privy.auth.siwe.init(
@@ -454,6 +528,9 @@ export function usePrivyAuth() {
     address.value = walletAddress
     privyUser.value = session.user
     isAuthenticated.value = true
+
+    // Wrap external wallet in smart account for paymaster (gas in USDC)
+    await initSmartAccount()
 
     // Persist wallet info for session restore
     if (rdns) localStorage.setItem(`${BRAND.storagePrefix}_wallet_rdns`, rdns)
@@ -478,7 +555,7 @@ export function usePrivyAuth() {
       logout()
       return
     }
-    const newAddress = getAddress(accounts[0]) as `0x${string}`
+    const newAddress = getAddress(accounts[0]!) as `0x${string}`
     if (newAddress === address.value) return
 
     // Update address and clear cached wallet client so it's recreated with new account
@@ -536,6 +613,7 @@ export function usePrivyAuth() {
       })
       const provider = sdk.makeWeb3Provider({ options: 'smartWalletOnly' })
       const accounts: string[] = await provider.request({ method: 'eth_requestAccounts' }) as string[]
+      if (!accounts[0]) throw new Error('No account returned from Coinbase Wallet')
       const walletAddress = getAddress(accounts[0]) as `0x${string}`
 
       // Generate SIWE message
@@ -567,7 +645,6 @@ export function usePrivyAuth() {
   // ---- Post-login: create/retrieve embedded wallet ----
   async function handlePostLogin(session: { user: User }) {
     privyUser.value = session.user
-    isAuthenticated.value = true
 
     let embeddedWallet = getUserEmbeddedEthereumWallet(session.user)
 
@@ -579,8 +656,13 @@ export function usePrivyAuth() {
     }
 
     if (embeddedWallet) {
+      // Set EOA address as interim, then upgrade to smart account address
       address.value = embeddedWallet.address as `0x${string}`
+      await initSmartAccount()
+      // After initSmartAccount, address.value = smart account address (or stays as EOA if init failed)
     }
+
+    isAuthenticated.value = true
   }
 
   // ---- Logout ----
@@ -600,6 +682,8 @@ export function usePrivyAuth() {
     loginMethod.value = null
     _walletClient = null
     _embeddedProvider = null
+    _smartAccountClient = null
+    smartAccountAddress.value = undefined
     if (_externalProvider?.removeListener) {
       _externalProvider.removeListener('accountsChanged', onAccountsChanged)
     }
@@ -620,6 +704,9 @@ export function usePrivyAuth() {
     isMiniApp: readonly(isMiniApp),
     chainId,
     isBase,
+    isSmartAccount,
+    smartAccountAddress: readonly(smartAccountAddress),
+    eoaWalletAddress: readonly(eoaWalletAddress),
 
     // Clients
     getPublicClient,

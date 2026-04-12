@@ -4,13 +4,13 @@ export const BRAND = {
   domain: 'auren.app',
   siteUrl: 'https://auren.app',
   supportX: 'https://x.com/aurenapp',
-  tagline: 'Smart pockets for modern onchain savers.',
+  tagline: 'Goal-based savings that work from any chain.',
   description:
-    'Goal-based earning on Base with smart wallets, sponsored gas for first actions, and beginner-friendly funding.',
+    'Auren lets you save toward real goals with smart pockets, embedded wallets, and crosschain deposits — no crypto experience needed.',
   heroTitle: 'Save toward what matters.',
-  heroAccent: 'Let the rails disappear.',
+  heroAccent: 'From any chain.',
   heroBody:
-    'Auren turns onchain saving into a smooth habit with goal pockets, embedded smart wallets, and a first deposit experience designed to feel simple.',
+    'Auren turns onchain saving into a smooth habit. Create goal pockets, deposit from any chain or token, and earn real yield — without touching a single DeFi interface.',
   storagePrefix: 'auren',
 } as const
 

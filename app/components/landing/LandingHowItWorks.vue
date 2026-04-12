@@ -3,36 +3,34 @@ import { useIntersectionObserver } from '@vueuse/core'
 
 const sectionRef = ref<HTMLElement>()
 const visible = ref(false)
-
-const { stop } = useIntersectionObserver(sectionRef, ([{ isIntersecting }]) => {
-  if (isIntersecting) { visible.value = true; stop() }
+const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
+  if (entry?.isIntersecting) { visible.value = true; stop() }
 }, { threshold: 0.1 })
 
 const steps = [
   {
+    number: '01',
     icon: 'lucide:target',
-    title: 'Pick a plan',
-    description: 'Choose how you want your money to grow. Safe and steady, balanced, or high potential.',
+    title: 'Create a pocket',
+    description: 'Give it a name, set a savings goal, and pick a yield strategy. Conservative keeps you in stablecoins. Balanced rides Bitcoin. Aggressive goes full Ethereum.',
+    tag: 'Takes 30 seconds',
+    tagIcon: 'lucide:clock',
   },
   {
-    icon: 'lucide:user-round',
-    title: 'Sign in',
-    description: 'Use your existing wallet, or create an account with just your email.',
+    number: '02',
+    icon: 'lucide:send',
+    title: 'Deposit from any chain',
+    description: 'Connect any wallet on any network. Send USDT on Polygon, ETH on Arbitrum, USDC anywhere — whatever you have. LI.FI routes it to the vault automatically.',
+    tag: 'No bridging needed',
+    tagIcon: 'lucide:zap',
   },
   {
-    icon: 'lucide:arrow-down-to-line',
-    title: 'Add money',
-    description: 'Transfer funds into your chosen plan. Takes less than a minute.',
-  },
-  {
+    number: '03',
     icon: 'lucide:trending-up',
     title: 'Watch it grow',
-    description: 'Your money earns interest automatically. Check your balance anytime.',
-  },
-  {
-    icon: 'lucide:door-open',
-    title: 'Cash out anytime',
-    description: 'No lock-ups, no penalties. Withdraw whenever you want.',
+    description: 'Your deposit earns real yield inside audited DeFi vaults — Morpho, Aave, and others. Yield compounds daily. Withdraw any amount, any time, with zero penalties.',
+    tag: 'Real yield, daily',
+    tagIcon: 'lucide:coins',
   },
 ]
 </script>
@@ -43,69 +41,76 @@ const steps = [
     ref="sectionRef"
     class="py-24 sm:py-32 relative overflow-hidden"
   >
-    <!-- Background glow -->
+    <!-- BG glow -->
     <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
-      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-200 h-100 rounded-full bg-primary/5 blur-[150px]" />
+      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-150 h-64 rounded-full bg-primary/4 blur-[120px]" />
     </div>
 
     <div class="relative max-w-6xl mx-auto px-5 sm:px-6 lg:px-8">
-      <!-- Section header -->
+
+      <!-- Header -->
       <div
         class="text-center mb-16 transition-all duration-700 ease-out"
         :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
       >
-        <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">
-          How It Works
-        </p>
+        <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">How it works</p>
         <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-[-0.03em]">
-          Getting started is easy
+          Three steps. That's it.
         </h2>
+        <p class="mt-4 text-muted-foreground max-w-md mx-auto">
+          The complexity is ours. The yield is yours.
+        </p>
       </div>
 
       <!-- Steps -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 lg:gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5 lg:gap-6 relative">
+
+        <!-- Connecting line (desktop only) -->
+        <div class="hidden md:block absolute top-9 left-[calc(33.333%+1rem)] right-[calc(33.333%+1rem)] h-px border-t border-dashed border-border/50" aria-hidden="true" />
+
         <div
           v-for="(step, i) in steps"
-          :key="i"
-          class="group relative z-10 text-center rounded-2xl p-5 sm:p-6
-                 bg-white/3 border border-white/6
-                 hover:bg-white/5 hover:border-white/12
-                 transition-all duration-500"
+          :key="step.number"
+          class="relative rounded-2xl bg-card border border-border p-7 transition-all duration-700 ease-out"
           :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'"
-          :style="{ transitionDelay: visible ? `${200 + i * 120}ms` : '0ms' }"
+          :style="{ transitionDelay: visible ? `${i * 140}ms` : '0ms' }"
         >
-          <!-- Step icon -->
-          <div class="relative z-10 mx-auto mb-4">
-            <div
-              class="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto
-                     bg-primary/10 border border-primary/20
-                     transition-all duration-500 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-primary/10"
-            >
-              <Icon :name="step.icon" class="w-6 h-6 text-primary" />
-            </div>
-            <!-- Step number -->
-            <span
-              class="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full
-                     text-[10px] font-bold flex items-center justify-center
-                     bg-primary text-white shadow-lg shadow-primary/30
-                     transition-transform duration-500 group-hover:scale-110"
-            >
-              {{ i + 1 }}
+          <!-- Step number badge -->
+          <div class="flex items-center justify-between mb-6">
+            <span class="text-4xl font-black text-muted-foreground/12 leading-none select-none">
+              {{ step.number }}
             </span>
+            <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Icon :name="step.icon" class="w-5 h-5 text-primary" />
+            </div>
           </div>
 
-          <h3 class="text-sm font-semibold mb-1.5 text-foreground">{{ step.title }}</h3>
-          <p class="text-xs text-muted-foreground leading-relaxed">
-            {{ step.description }}
-          </p>
+          <!-- Content -->
+          <h3 class="text-lg font-bold text-foreground mb-3">{{ step.title }}</h3>
+          <p class="text-sm text-muted-foreground leading-relaxed mb-6">{{ step.description }}</p>
 
-          <!-- Bottom accent line -->
-          <div
-            class="absolute bottom-0 left-1/2 -translate-x-1/2 h-0.5 w-0 rounded-full bg-primary/50
-                   transition-all duration-500 group-hover:w-12"
-          />
+          <!-- Tag -->
+          <div class="flex items-center gap-1.5 text-xs font-medium text-primary/70">
+            <Icon :name="step.tagIcon" class="w-3.5 h-3.5" />
+            {{ step.tag }}
+          </div>
         </div>
       </div>
+
+      <!-- Bottom note -->
+      <p
+        class="mt-10 text-center text-sm text-muted-foreground/50 transition-all duration-700 ease-out"
+        :class="visible ? 'opacity-100' : 'opacity-0'"
+        style="transition-delay: 500ms"
+      >
+        Crosschain routing powered by
+        <span class="text-foreground/60 font-medium">LI.FI</span>
+        · Yield vaults by
+        <span class="text-foreground/60 font-medium">Morpho, Aave &amp; Euler</span>
+        · Wallets by
+        <span class="text-foreground/60 font-medium">Privy</span>
+      </p>
+
     </div>
   </section>
 </template>

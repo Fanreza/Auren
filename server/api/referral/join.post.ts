@@ -35,15 +35,14 @@ export default defineEventHandler(async (event) => {
   if (updateError) throw createError({ statusCode: 500, message: updateError.message })
 
   // Increment referrer's count
-  await supabase.rpc('increment_referral_count', { referrer_address: referrer.address })
-    .then(() => {})
-    .catch(() => {
-      // Fallback: manual increment if RPC doesn't exist
-      supabase
-        .from('users')
-        .update({ referral_count: (referrer as any).referral_count + 1 })
-        .eq('address', referrer.address)
-    })
+  const { error: rpcError } = await supabase.rpc('increment_referral_count', { referrer_address: referrer.address })
+  if (rpcError) {
+    // Fallback: manual increment if RPC doesn't exist
+    await supabase
+      .from('users')
+      .update({ referral_count: (referrer as any).referral_count + 1 })
+      .eq('address', referrer.address)
+  }
 
   return { ok: true }
 })

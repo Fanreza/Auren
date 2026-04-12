@@ -15,8 +15,8 @@ onMounted(() => {
 <style>
 /* Custom styling for the tour popover */
 .driver-popover.auren-tour {
-  background-color: hsl(186 22% 9%);
-  border: 1px solid hsl(186 10% 17%);
+  background-color: hsl(212 42% 9%);
+  border: 1px solid hsl(212 20% 18%);
   border-radius: 16px;
   padding: 20px;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
@@ -60,12 +60,12 @@ onMounted(() => {
 }
 
 .driver-popover.auren-tour .driver-popover-next-btn {
-  background-color: hsl(155 28% 46%);
+  background-color: hsl(82 52% 46%);
   color: white;
 }
 
 .driver-popover.auren-tour .driver-popover-next-btn:hover {
-  background-color: hsl(155 28% 40%);
+  background-color: hsl(82 52% 40%);
 }
 
 .driver-popover.auren-tour .driver-popover-prev-btn {
@@ -89,6 +89,6 @@ onMounted(() => {
 .driver-popover.auren-tour .driver-popover-arrow-side-right.driver-popover-arrow,
 .driver-popover.auren-tour .driver-popover-arrow-side-top.driver-popover-arrow,
 .driver-popover.auren-tour .driver-popover-arrow-side-bottom.driver-popover-arrow {
-  border-color: hsl(186 22% 9%);
+  border-color: hsl(212 42% 9%);
 }
 </style>

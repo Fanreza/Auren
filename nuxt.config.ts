@@ -6,6 +6,7 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     ensoApiKey: '',
+    lifiApiKey: '',
     supabaseUrl: '',
     supabaseKey: '',
     public: {
@@ -14,6 +15,7 @@ export default defineNuxtConfig({
       walletConnectProjectId: '',
       moonpayApiKey: '',
       baseRpcUrl: '',
+      pimlicoApiKey: '',
     },
   },
 
@@ -22,18 +24,18 @@ export default defineNuxtConfig({
   pwa: {
     registerType: 'autoUpdate',
     manifest: {
-      name: `${BRAND.name} - Smart pockets on Base`,
+      name: `${BRAND.name} - Goal-based savings, any chain`,
       short_name: BRAND.shortName,
       description: BRAND.description,
-      theme_color: '#55967B',
+      theme_color: '#86B238',
       background_color: '#0B0E0D',
       display: 'standalone',
       orientation: 'portrait',
       start_url: '/',
       icons: [
-        { src: '/icon.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-        { src: '/icon.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        { src: '/logo.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: '/icon.png', sizes: '1024x1024', type: 'image/png', purpose: 'any' },
+        { src: '/icon.png', sizes: '1024x1024', type: 'image/png', purpose: 'maskable' },
+        { src: '/new.jpeg', sizes: '1024x1024', type: 'image/jpeg', purpose: 'any' },
       ],
     },
     workbox: {
@@ -41,9 +43,14 @@ export default defineNuxtConfig({
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
       runtimeCaching: [
         {
-          urlPattern: /^https:\/\/api\.yo\.xyz\/.*/i,
+          urlPattern: /^https:\/\/earn\.li\.fi\/.*/i,
           handler: 'NetworkFirst',
-          options: { cacheName: 'yo-api', expiration: { maxEntries: 50, maxAgeSeconds: 300 } },
+          options: { cacheName: 'lifi-earn', expiration: { maxEntries: 50, maxAgeSeconds: 300 } },
+        },
+        {
+          urlPattern: /^https:\/\/li\.quest\/.*/i,
+          handler: 'NetworkFirst',
+          options: { cacheName: 'lifi-composer', expiration: { maxEntries: 50, maxAgeSeconds: 300 } },
         },
         {
           urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -78,6 +85,15 @@ export default defineNuxtConfig({
     optimizeDeps: {
       include: ['@coinbase/wallet-sdk', '@privy-io/js-sdk-core', '@farcaster/miniapp-sdk', 'comlink'],
     },
+    define: {
+      // node globals needed by wallet libs (bn.js, etc.)
+      global: 'globalThis',
+    },
+    resolve: {
+      alias: {
+        buffer: 'buffer/',
+      },
+    },
   },
 
   app: {
@@ -90,15 +106,14 @@ export default defineNuxtConfig({
         { name: 'description', content: BRAND.description },
         { property: 'og:type', content: 'website' },
         { property: 'og:url', content: BRAND.siteUrl },
-        { property: 'og:title', content: `${BRAND.name} - Smart pockets on Base` },
+        { property: 'og:title', content: `${BRAND.name} - Goal-based savings, any chain` },
         { property: 'og:description', content: BRAND.description },
-        { property: 'og:image', content: brandAsset('/logo.png') },
+        { property: 'og:image', content: brandAsset('/new.jpeg') },
         { property: 'og:site_name', content: BRAND.name },
         { name: 'twitter:card', content: 'summary_large_image' },
-        { name: 'twitter:title', content: `${BRAND.name} - Smart pockets on Base` },
+        { name: 'twitter:title', content: `${BRAND.name} - Goal-based savings, any chain` },
         { name: 'twitter:description', content: BRAND.description },
-        { name: 'twitter:image', content: brandAsset('/logo.png') },
-        { name: 'base:app_id', content: '69a8116ef1a340127fafeb96' },
+        { name: 'twitter:image', content: brandAsset('/new.jpeg') },
         {
           name: 'fc:miniapp',
           content: JSON.stringify({
@@ -111,16 +126,16 @@ export default defineNuxtConfig({
                 name: BRAND.name,
                 url: BRAND.siteUrl,
                 splashImageUrl: brandAsset('/splash.png'),
-                splashBackgroundColor: '#0B1314',
+                splashBackgroundColor: '#060F19',
               },
             },
           }),
         },
-        { name: 'theme-color', content: '#55967B' },
+        { name: 'theme-color', content: '#86B238' },
       ],
       link: [
-        { rel: 'icon', type: 'image/png', href: '/logo.png' },
-        { rel: 'apple-touch-icon', href: '/logo.png' },
+        { rel: 'icon', type: 'image/jpeg', href: '/new.jpeg' },
+        { rel: 'apple-touch-icon', href: '/new.jpeg' },
         { rel: 'manifest', href: '/manifest.webmanifest' },
         { rel: 'canonical', href: BRAND.siteUrl },
       ],

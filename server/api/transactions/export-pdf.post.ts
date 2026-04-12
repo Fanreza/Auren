@@ -6,7 +6,7 @@ export default defineEventHandler(async (event) => {
   try {
     const reqUrl = getRequestURL(event)
     const origin = `${reqUrl.protocol}//${reqUrl.host}`
-    const res = await fetch(`${origin}/logo.png`)
+    const res = await fetch(`${origin}/new.jpeg`)
     if (res.ok) {
       const buf = Buffer.from(await res.arrayBuffer())
       logoBase64 = buf.toString('base64')

@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { parseUnits, formatUnits } from 'viem'
-import { STRATEGIES, type StrategyKey } from '~/config/strategies'
+import { STRATEGIES, STRATEGY_LIST, type StrategyKey } from '~/config/strategies'
 import type { DbPocket } from '~/types/database'
 import { BRAND } from '~/config/brand'
 import { usePrivyAuth } from '~/composables/usePrivy'
-import { useBalances } from '~/composables/useBalances'
 import { useVault } from '~/composables/useVault'
-import { useEnso } from '~/composables/useEnso'
 import { useCoinGecko } from '~/composables/useCoinGecko'
 import { useWalletTokens } from '~/composables/useWalletTokens'
-import { useDepositFlow } from '~/composables/useDepositFlow'
 import { useTransactionRecorder } from '~/composables/useTransactionRecorder'
+import { useDashboardStats } from '~/composables/useDashboardStats'
 import { storeToRefs } from 'pinia'
 import { useProfileStore } from '~/stores/useProfileStore'
 import { toast } from 'vue-sonner'
 
 // ---- Wallet ----
-const { isConnected, address, isBase, isReady } = usePrivyAuth()
+const { isConnected, address, isReady, logout } = usePrivyAuth()
+
+async function handleLogout() {
+  await logout()
+  navigateTo('/')
+}
 
 const showFundDialog = ref(false)
 
@@ -26,8 +29,8 @@ const showConnectModal = ref(false)
 const profileStore = useProfileStore()
 const {
   currentUser, pockets, loading: loadingPockets,
-  pocketPositions, pocketProfits, loadingPositions,
-  totalPortfolioFormatted,
+  pocketPositions, loadingPositions,
+  totalPortfolioFormatted, lifiVaultAddresses,
 } = storeToRefs(profileStore)
 
 const profileDisplayName = computed(() =>
@@ -35,48 +38,127 @@ const profileDisplayName = computed(() =>
 )
 const pocketCount = computed(() => pockets.value.length)
 
-// ---- Balances & Vault ----
-const { ethBalance, fetchBalances, loading: loadingBalances } = useBalances()
-const { txState, txHash, txError, deposit, redeem, zapDeposit, zapWithdraw, switchVault, getClaimableRewards, claimRewards, reset } = useVault()
-import type { RewardsInfo } from '~/composables/useVault'
-const { getZapQuote, getZapWithdrawQuote, getWalletBalances, NATIVE_TOKEN } = useEnso()
+// ---- Dashboard stats (declared early so refetchAll can reference fetchAllTransactions) ----
+const {
+  allTransactions,
+  loadingTx,
+  fetchAllTransactions,
+  totalValueUsd: dashTotalValueUsd,
+  netContributedUsd,
+  unrealizedPnlUsd,
+  pnlPercent,
+  avgApy: dashAvgApy,
+  projectedAnnualUsd,
+  allocation,
+  chartSeries,
+} = useDashboardStats()
+
+// ---- Vault ----
+const { txState, txHash, txError, deposit: directDeposit, lifiDeposit, reset } = useVault()
 const { getTokenPrices } = useCoinGecko()
 
-// ---- Wallet tokens ----
+// ---- Wallet tokens (direct RPC, no Enso) ----
 const { walletTokens, loadingTokens, fetchWalletTokens } = useWalletTokens(
-  address, getWalletBalances, getTokenPrices,
+  address, null, getTokenPrices,
 )
 
-// ---- Deposit / Withdraw flow ----
-const {
-  selectedPocket, showDepositDialog, zapQuote, withdrawZapQuote, fetchingQuote, fetchingWithdrawQuote,
-  selectedStrategy, lastTxType, lastTxAmount, isDirectWithdraw,
-  openDepositDialog, handleDeposit, handleWithdraw,
-  handleSelectToken, handleSelectWithdrawToken, handleUpdateAmount, handleChangeMode,
-} = useDepositFlow({
-  address, deposit, redeem, zapDeposit, zapWithdraw, reset,
-  getZapQuote, getZapWithdrawQuote, NATIVE_TOKEN, walletTokens, fetchWalletTokens,
-  fetchPocketPosition: (p) => profileStore.fetchPocketPosition(p),
+// ---- Pocket actions ----
+// "Add" on pocket → open create dialog at step 3 with strategy pre-selected
+const depositPocketKey = ref<StrategyKey | null>(null)
+// "Explore strategy" card → open create dialog at step 1 with strategy pre-filled
+const newPocketStrategy = ref<StrategyKey | null>(null)
+
+function handleExploreStrategy(key: StrategyKey) {
+  // Only 1 pocket per strategy for now — multi-vault per strategy is still WIP.
+  // If the user already has a pocket for this strategy, block creation and show why.
+  const existing = pockets.value.find(p => p.strategy_key === key)
+  if (existing) {
+    toast.info('Multi-vault per strategy is still in development. You already have a pocket for this strategy — use its "Add" button to deposit more.')
+    return
+  }
+  depositPocketKey.value = null
+  newPocketStrategy.value = key
+  showCreateDialog.value = true
+}
+
+// Set of strategy keys user has already created a pocket for
+const usedStrategyKeys = computed(() => {
+  const set = new Set<StrategyKey>()
+  for (const p of pockets.value) set.add(p.strategy_key as StrategyKey)
+  return set
 })
 
-const pocketPosition = computed(() => {
-  if (!selectedPocket.value) return { shares: 0n, value: 0n }
-  return pocketPositions.value[selectedPocket.value.id] || { shares: 0n, value: 0n }
-})
+function handleNewPocketClick() {
+  if (usedStrategyKeys.value.size >= STRATEGY_LIST.length) {
+    toast.info('You already have a pocket for every strategy. Multi-vault per strategy is still in development.')
+    return
+  }
+  depositPocketKey.value = null
+  newPocketStrategy.value = null
+  showCreateDialog.value = true
+}
+
+// TVL formatter ($12M, $340K, etc)
+function formatTvl(raw: string | null): string {
+  if (!raw) return '—'
+  const n = parseFloat(raw)
+  if (isNaN(n) || n <= 0) return '—'
+  if (n >= 1_000_000_000) return '$' + (n / 1_000_000_000).toFixed(1) + 'B'
+  if (n >= 1_000_000)     return '$' + (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000)         return '$' + (n / 1_000).toFixed(0) + 'K'
+  return '$' + n.toFixed(0)
+}
+
+function handlePocketDeposit(pocket: DbPocket) {
+  depositPocketKey.value = pocket.strategy_key as StrategyKey
+  showCreateDialog.value = true
+}
+
+// "Withdraw" on pocket → open withdraw dialog
+const fundDefaultTab = ref<'transfer' | 'buy' | 'withdraw'>('transfer')
+const showWithdrawDialog = ref(false)
+const withdrawPocket = ref<DbPocket | null>(null)
+
+function handlePocketWithdraw(pocket: DbPocket) {
+  withdrawPocket.value = pocket
+  showWithdrawDialog.value = true
+}
+
+// Central refetch — call after ANY action (deposit, withdraw, fund, etc.)
+async function refetchAll() {
+  await fetchWalletTokens()
+  if (address.value) await profileStore.fetchAllPositions(address.value)
+  await profileStore.refreshPockets()
+  await fetchAllTransactions()
+}
+
+// Track for transaction recorder
+const selectedPocket = ref<DbPocket | null>(null)
+const lastTxType = ref<string | null>(null)
+const lastTxAmount = ref<string | null>(null)
+const showDepositDialog = ref(false)
+
+const selectedStrategy = computed(() =>
+  selectedPocket.value ? STRATEGIES[selectedPocket.value.strategy_key as StrategyKey] : null,
+)
 
 // ---- Transaction recording ----
 useTransactionRecorder({
   txState, txHash, reset,
   selectedPocket, selectedStrategy,
   lastTxType, lastTxAmount, showDepositDialog,
-  address, fetchBalances, fetchWalletTokens,
-  fetchAllPositions: (addr) => profileStore.fetchAllPositions(addr),
-  refreshPockets: () => profileStore.refreshPockets(),
+  address, fetchBalances: refetchAll, fetchWalletTokens: refetchAll,
+  fetchAllPositions: async () => { await refetchAll() },
+  refreshPockets: async () => { await refetchAll() },
 })
 
 // ---- Create pocket ----
 const showCreateDialog = ref(false)
 const creatingPocket = ref(false)
+
+// Refetch when any dialog closes
+watch(showWithdrawDialog, (v) => { if (!v) refetchAll() })
+watch(showCreateDialog, (v) => { if (!v) { depositPocketKey.value = null; refetchAll() } })
 
 async function handleCreatePocket(payload: {
   name: string
@@ -94,69 +176,87 @@ async function handleCreatePocket(payload: {
     })
     if (pocket) {
       showCreateDialog.value = false
-      openDepositDialog(pocket)
+      await refetchAll()
     }
   } finally {
     creatingPocket.value = false
   }
 }
 
-// ---- Switch vault ----
-const showSwitchDialog = ref(false)
-const switchPocket = ref<DbPocket | null>(null)
-const switchLoading = ref(false)
-
-function openSwitchDialog(pocket: DbPocket) {
-  switchPocket.value = pocket
-  showSwitchDialog.value = true
-}
-
-async function handleSwitchVault(toStrategyKey: StrategyKey) {
-  if (!switchPocket.value || switchLoading.value) return
-  const fromStrategy = STRATEGIES[switchPocket.value.strategy_key as StrategyKey]
-  const toStrategy = STRATEGIES[toStrategyKey]
-  if (!fromStrategy || !toStrategy) return
-
-  switchLoading.value = true
+async function handleCreateAndDeposit(payload: {
+  name: string
+  purpose?: string
+  target_amount?: number
+  timeline?: string
+  strategy_key: StrategyKey
+  fromChainId: number
+  fromToken: `0x${string}`
+  fromTokenSymbol: string
+  fromTokenDecimals: number
+  totalAmount: string
+  allocations: Array<{
+    vaultAddress: string
+    vaultChainId: number
+    assetSymbol: string
+    protocol: string
+    weight: number
+    amount: string
+    quote?: any
+  }>
+}) {
+  if (!currentUser.value) return
+  creatingPocket.value = true
   try {
-    const { recordTransaction } = useUserData()
-    const pos = pocketPositions.value[switchPocket.value.id]
-    const hasBalance = pos && pos.shares > 0n
+    // If depositing to existing pocket (via "Add" button), skip creation
+    let pocket: DbPocket | null = null
+    if (depositPocketKey.value) {
+      pocket = pockets.value.find(p => p.strategy_key === depositPocketKey.value) ?? null
+    }
+    if (!pocket) {
+      pocket = await profileStore.createPocket({
+        user_id: currentUser.value.id,
+        name: payload.name,
+        purpose: payload.purpose,
+        target_amount: payload.target_amount,
+        timeline: payload.timeline,
+        strategy_key: payload.strategy_key,
+      })
+    }
+    if (!pocket) return
 
-    if (hasBalance) {
-      await switchVault(fromStrategy, toStrategy, pos.shares)
-      if (txState.value !== 'confirmed') return
+    selectedPocket.value = pocket
+    lastTxType.value = 'deposit'
+    lastTxAmount.value = payload.totalAmount
 
-      if (txHash.value) {
-        await recordTransaction({
-          pocket_id: switchPocket.value.id,
-          type: 'switch',
-          amount: `${fromStrategy.vaultSymbol} → ${toStrategy.vaultSymbol}`,
-          asset_symbol: toStrategy.assetSymbol,
-          tx_hash: txHash.value,
-          timestamp: Math.floor(Date.now() / 1000),
-        })
-      }
+    // Execute each allocation's deposit sequentially via LI.FI Composer
+    const strategy = STRATEGIES[payload.strategy_key]
+    for (const alloc of payload.allocations) {
+      reset()
+      const amtFixed = Number(alloc.amount).toFixed(payload.fromTokenDecimals)
+      const amtWei = parseUnits(amtFixed, payload.fromTokenDecimals).toString()
+
+      // Always fetch fresh quote at execute time — cached quotes go stale
+      await lifiDeposit({
+        fromChain: payload.fromChainId,
+        fromToken: payload.fromToken,
+        fromAmount: amtWei,
+        vaultAddress: alloc.vaultAddress,
+        vaultChainId: alloc.vaultChainId,
+        vaultAssetAddress: strategy?.assetAddress,
+        vaultProtocol: alloc.protocol,
+      })
+
+      if (txState.value === 'failed') break
     }
 
-    await $fetch(`/api/pockets/${switchPocket.value.id}`, {
-      method: 'PATCH',
-      body: { strategy_key: toStrategyKey },
-    })
-    await profileStore.refreshPockets()
-    if (address.value) await profileStore.fetchAllPositions(address.value)
-
-    showSwitchDialog.value = false
-    switchPocket.value = null
-    reset()
-    toast.success('Vault switched!', {
-      description: `${fromStrategy.label} → ${toStrategy.label}`,
-    })
-  } finally {
-    switchLoading.value = false
+    // Release the dialog immediately so success state renders while refetch runs in background
+    creatingPocket.value = false
+    await refetchAll()
+  } catch (e) {
+    creatingPocket.value = false
+    throw e
   }
 }
-
 
 // ---- Schedule dialog ----
 const showScheduleDialog = ref(false)
@@ -223,49 +323,19 @@ const totalWalletFormatted = computed(() =>
   totalWalletUsd.value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
 )
 
-// Fetch wallet tokens on connect
-watch(isConnected, (connected) => {
-  if (connected) fetchWalletTokens()
-}, { immediate: true })
-
-// ---- Merkl Rewards ----
-const rewardsInfo = ref<RewardsInfo>({ rewards: [], hasClaimable: false, raw: null })
-const loadingRewards = ref(false)
-const claimingRewards = ref(false)
-
-async function fetchRewards() {
-  loadingRewards.value = true
-  try {
-    rewardsInfo.value = await getClaimableRewards()
-  } finally {
-    loadingRewards.value = false
-  }
-}
-
-async function handleClaimRewards() {
-  if (!rewardsInfo.value.raw) return
-  claimingRewards.value = true
-  try {
-    await claimRewards(rewardsInfo.value.raw)
-    if (txState.value === 'confirmed') {
-      toast.success('Rewards claimed!')
-      await fetchRewards()
-      reset()
-    }
-  } finally {
-    claimingRewards.value = false
-  }
-}
-
-// Fetch rewards when address changes (covers connect + wallet switch)
-// Delayed to avoid rate-limiting the public RPC alongside position fetches
-let rewardsTimeout: ReturnType<typeof setTimeout> | null = null
-watch(address, (addr) => {
-  if (rewardsTimeout) clearTimeout(rewardsTimeout)
-  if (addr) {
-    rewardsTimeout = setTimeout(() => fetchRewards(), 3000)
-  } else {
-    rewardsInfo.value = { rewards: [], hasClaimable: false, raw: null }
+// Refetch wallet tokens when address changes (EOA → smart account)
+// Only fetch once smart account is ready (skip EOA intermediate state)
+const { smartAccountAddress } = usePrivyAuth()
+watch([() => address.value, () => smartAccountAddress.value], ([addr, smart]) => {
+  // Wait for smart account init — if smart is set, addr = smart account (correct)
+  // If smart is undefined but addr exists, we're still in EOA phase — skip
+  if (addr && smart) fetchWalletTokens()
+  else if (addr && !smart) {
+    // No smart account support (fallback) — fetch with whatever address we have
+    // Delay slightly to allow initSmartAccount to complete
+    setTimeout(() => {
+      if (!smartAccountAddress.value && address.value) fetchWalletTokens()
+    }, 3000)
   }
 }, { immediate: true })
 
@@ -285,8 +355,6 @@ const tips = [
 const loadingTip = tips[Math.floor(Math.random() * tips.length)]
 
 // ---- Helpers ----
-const lowGas = computed(() => !loadingBalances.value && ethBalance.value < parseUnits('0.0005', 18))
-
 // ---- Yield comparison data ----
 const totalPortfolioUsd = computed(() => {
   let total = 0
@@ -301,6 +369,11 @@ const totalPortfolioUsd = computed(() => {
   return total
 })
 
+// Auto-fetch tx history when pockets load or positions change
+watch([pockets, pocketPositions], async () => {
+  if (pockets.value.length) await fetchAllTransactions()
+}, { immediate: true, deep: true })
+
 const averageApy = computed(() => {
   const apys: number[] = []
   for (const pocket of pockets.value) {
@@ -314,287 +387,334 @@ const averageApy = computed(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-background">
-    <!-- Loading -->
+  <div class="min-h-dvh bg-background">
+
+    <!-- Loading splash -->
     <template v-if="!isReady">
-      <div class="h-dvh flex flex-col items-center justify-center overflow-hidden gap-6">
-        <img src="/logo.png" :alt="BRAND.name" class="w-20 h-20 animate-pulse" />
-        <p class="text-sm text-muted-foreground/70 max-w-xs text-center px-6">
-          {{ loadingTip }}
-        </p>
+      <div class="h-dvh flex flex-col items-center justify-center gap-4">
+        <div class="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center ring-1 ring-primary/20">
+          <img src="/new.jpeg" :alt="BRAND.name" class="w-8 h-8 rounded-xl" />
+        </div>
+        <p class="text-xs text-muted-foreground max-w-50 text-center">{{ loadingTip }}</p>
       </div>
     </template>
 
     <template v-else>
-    <!-- Header -->
-    <AppHeader
-      :is-connected="isConnected"
-      :is-base="isBase"
-      :display-name="profileDisplayName"
-      @sign-in="showConnectModal = true"
-      @go-profile="navigateTo('/profile')"
-    />
-
-    <!-- Not connected -->
-    <AppHero v-if="!isConnected" @connect="showConnectModal = true" />
-
-    <!-- Connected: Pocket Dashboard -->
-    <main v-else class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
-      <!-- Alerts -->
-      <Alert v-if="lowGas" class="mb-4">
-        <Icon name="lucide:info" class="w-4 h-4" />
-        <AlertTitle>Low balance for fees</AlertTitle>
-        <AlertDescription>
-          You'll need a small amount of ETH to cover processing fees.
-        </AlertDescription>
-      </Alert>
-
-      <Alert v-if="!loadingTokens && totalWalletUsd > 0" class="mb-4 border-primary/30 bg-primary/5 [&>svg]:text-primary">
-        <Icon name="lucide:wallet" class="w-4 h-4" />
-        <AlertTitle class="text-primary">{{ totalWalletFormatted }} available in your wallet</AlertTitle>
-        <AlertDescription>
-          You have funds ready to deposit into your pockets.
-        </AlertDescription>
-      </Alert>
-
-      <!-- Merkl Rewards -->
-      <div
-        v-if="loadingRewards && !rewardsInfo.hasClaimable"
-        class="mb-4 rounded-xl border border-border/50 bg-muted/30 p-4"
-      >
-        <div class="flex items-center gap-3">
-          <Skeleton class="w-10 h-10 rounded-xl shrink-0" />
-          <div class="space-y-2 flex-1">
-            <Skeleton class="h-4 w-32" />
-            <Skeleton class="h-3 w-48" />
-          </div>
-        </div>
-      </div>
-
-      <div
-        v-if="rewardsInfo.hasClaimable"
-        class="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"
-      >
-        <div class="flex items-start justify-between gap-3">
-          <div class="flex items-center gap-3">
-            <img
-              src="https://storage.googleapis.com/merkl-static-assets/tokens/YO.svg"
-              alt="Reward token"
-              class="w-10 h-10 rounded-xl shrink-0"
-            >
-            <div>
-              <p class="text-sm font-semibold">Rewards available</p>
-              <div class="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                <span
-                  v-for="r in rewardsInfo.rewards"
-                  :key="r.tokenAddress"
-                  class="text-xs text-muted-foreground font-mono"
-                >
-                  {{ r.claimableFormatted }} {{ r.tokenSymbol }}
-                </span>
-              </div>
-            </div>
-          </div>
-          <Button
-            size="sm"
-            class="shrink-0 bg-amber-500 text-white hover:bg-amber-600"
-            :disabled="claimingRewards || (txState !== 'idle' && txState !== 'confirmed' && txState !== 'failed')"
-            @click="handleClaimRewards"
-          >
-            <Icon v-if="claimingRewards" name="lucide:loader-2" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
-            <Icon v-else name="lucide:sparkles" class="w-3.5 h-3.5 mr-1.5" />
-            Claim
-          </Button>
-        </div>
-      </div>
-
-      <!-- Portfolio summary -->
-      <div class="mb-8" data-tour="total-balance">
-        <p class="text-sm text-muted-foreground mb-1">Total balance</p>
-        <Skeleton v-if="loadingPositions" class="h-10 w-40 mb-1" />
-        <h1 v-else class="text-4xl font-bold tracking-tight">{{ totalPortfolioFormatted }}</h1>
-        <div class="flex items-center gap-3 mt-1">
-          <p class="text-sm text-muted-foreground">
-            {{ pocketCount }} pocket{{ pocketCount !== 1 ? 's' : '' }}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            class="h-7 text-xs"
-            data-tour="fund-wallet"
-            @click="showFundDialog = true"
-          >
-            <Icon name="lucide:download" class="w-3.5 h-3.5 mr-1" />
-            Fund Wallet
-          </Button>
-        </div>
-      </div>
-
-      <!-- Yield comparison -->
-      <AppYieldComparisonCard
-        v-if="!loadingPositions && pockets.length > 0"
-        :total-value-usd="totalPortfolioUsd"
-        :average-apy="averageApy"
-        class="mb-6"
+      <AppHeader
+        :is-connected="isConnected"
+        :is-base="true"
+        :display-name="profileDisplayName"
+        :address="address"
+        @sign-in="showConnectModal = true"
+        @go-profile="navigateTo('/profile')"
+        @logout="handleLogout"
       />
 
-      <div class="flex items-center justify-between mb-5">
-        <h2 class="text-lg font-semibold">Pockets</h2>
-        <Button
-          class="bg-primary text-primary-foreground hover:bg-primary/90"
-          data-tour="create-pocket"
-          @click="showCreateDialog = true"
-        >
-          <Icon name="lucide:plus" class="w-4 h-4 mr-1.5" />
-          Create Pocket
-        </Button>
-      </div>
+      <!-- Not connected -->
+      <AppHero v-if="!isConnected" @connect="showConnectModal = true" />
 
-      <!-- Loading -->
-      <div v-if="loadingPockets" class="flex items-center justify-center py-20">
-        <Icon name="lucide:loader-2" class="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
+      <!-- Connected -->
+      <main v-else class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 pb-16">
+        <div class="lg:grid lg:grid-cols-[320px_1fr] lg:gap-10 lg:items-start">
 
-      <!-- Empty state -->
-      <div
-        v-else-if="pockets.length === 0"
-        class="rounded-2xl bg-linear-to-br from-primary/5 via-background to-primary/5 border border-dashed border-primary/20 p-14 flex flex-col items-center justify-center text-center"
-      >
-        <div class="relative mb-6">
-          <div class="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
-            <Icon name="lucide:piggy-bank" class="w-10 h-10 text-primary" />
-          </div>
-          <div class="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-            <Icon name="lucide:sparkles" class="w-4 h-4 text-primary" />
-          </div>
+          <!-- ── LEFT: Portfolio panel ── -->
+          <aside class="lg:sticky lg:top-20 pb-6 lg:pb-0">
+            <div class="pt-4 lg:pt-8">
+              <p class="text-xs text-muted-foreground uppercase tracking-widest mb-3 font-medium">Total saved</p>
+              <Skeleton v-if="loadingPositions" class="h-12 w-44 mb-2" />
+              <h1 v-else class="text-5xl font-bold tracking-tight tabular-nums leading-none mb-2">
+                {{ totalPortfolioFormatted }}
+              </h1>
+              <p class="text-sm text-muted-foreground">
+                {{ pocketCount }} pocket{{ pocketCount !== 1 ? 's' : '' }}
+                <template v-if="averageApy > 0">
+                  · avg <span class="text-primary font-medium">{{ averageApy.toFixed(1) }}% APY</span>
+                </template>
+              </p>
+
+              <!-- Action buttons -->
+              <div class="flex gap-3 mt-6">
+                <Button
+                  class="flex-1 h-11 rounded-2xl font-semibold"
+                  data-tour="create-pocket"
+                  :disabled="usedStrategyKeys.size >= STRATEGY_LIST.length"
+                  @click="handleNewPocketClick"
+                >
+                  <Icon name="lucide:plus" class="w-4 h-4 mr-1.5" />
+                  New pocket
+                </Button>
+                <Button
+                  variant="secondary"
+                  class="h-11 px-5 rounded-2xl"
+                  data-tour="fund-wallet"
+                  @click="fundDefaultTab = 'transfer'; showFundDialog = true"
+                >
+                  <Icon name="lucide:credit-card" class="w-4 h-4 mr-1.5" />
+                  Fund
+                </Button>
+              </div>
+
+              <!-- Wallet balance nudge -->
+              <div
+                v-if="!loadingTokens && totalWalletUsd > 0.01"
+                class="mt-3 flex items-center justify-between text-xs bg-primary/8 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-primary/12 transition-colors"
+                @click="fundDefaultTab = 'transfer'; showFundDialog = true"
+              >
+                <div class="flex items-center gap-2 text-primary">
+                  <Icon name="lucide:wallet" class="w-3.5 h-3.5 shrink-0" />
+                  <span><span class="font-semibold">{{ totalWalletFormatted }}</span> in your wallet</span>
+                </div>
+                <Icon name="lucide:arrow-right" class="w-3.5 h-3.5 text-primary/60" />
+              </div>
+
+              <!-- Help & Resources — desktop only -->
+              <div class="hidden lg:block mt-8 pt-6 border-t border-border/50">
+                <p class="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider mb-3">
+                  Help &amp; resources
+                </p>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <NuxtLink
+                    to="/learn"
+                    class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Icon name="lucide:book-open" class="w-3.5 h-3.5 shrink-0" />
+                    <span>Learn</span>
+                  </NuxtLink>
+                  <NuxtLink
+                    to="/risks"
+                    class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Icon name="lucide:triangle-alert" class="w-3.5 h-3.5 shrink-0" />
+                    <span>Risks</span>
+                  </NuxtLink>
+                  <NuxtLink
+                    to="/terms"
+                    class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Icon name="lucide:file-text" class="w-3.5 h-3.5 shrink-0" />
+                    <span>Terms</span>
+                  </NuxtLink>
+                  <a
+                    :href="BRAND.supportX"
+                    target="_blank" rel="noopener"
+                    class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-muted/30 hover:bg-muted/60 transition-colors text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Icon name="lucide:message-circle" class="w-3.5 h-3.5 shrink-0" />
+                    <span>Support</span>
+                  </a>
+                </div>
+
+                <!-- Rotating tip -->
+                <div class="mt-4 rounded-lg bg-primary/5 border border-primary/10 p-3">
+                  <div class="flex items-start gap-2">
+                    <Icon name="lucide:lightbulb" class="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+                    <p class="text-[11px] text-muted-foreground leading-relaxed">{{ loadingTip }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <!-- ── RIGHT: Pockets ── -->
+          <section class="pt-4 lg:pt-8">
+            <p class="text-xs text-muted-foreground uppercase tracking-widest mb-4 font-medium">Pockets</p>
+
+            <!-- Loading -->
+            <div v-if="loadingPockets" class="flex justify-center py-16">
+              <Icon name="lucide:loader-2" class="w-5 h-5 animate-spin text-muted-foreground" />
+            </div>
+
+            <!-- Empty state -->
+            <div
+              v-else-if="pockets.length === 0"
+              class="rounded-2xl border border-dashed border-border/60 p-12 flex flex-col items-center text-center"
+            >
+              <div class="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+                <Icon name="lucide:piggy-bank" class="w-7 h-7 text-muted-foreground" />
+              </div>
+              <p class="font-semibold mb-1">No pockets yet</p>
+              <p class="text-sm text-muted-foreground mb-6 max-w-55">
+                Create a pocket to start saving toward a goal.
+              </p>
+              <Button class="rounded-xl" @click="showCreateDialog = true">
+                <Icon name="lucide:plus" class="w-4 h-4 mr-1.5" />
+                Create first pocket
+              </Button>
+            </div>
+
+            <!-- Pocket cards: 1 col mobile, 2 col desktop -->
+            <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <AppPocketCard
+                v-for="pocket in pockets"
+                :key="pocket.id"
+                :pocket="pocket"
+                :position="pocketPositions[pocket.id] || { shares: 0n, value: 0n }"
+                :asset-price="profileStore.getAssetPrice(pocket.strategy_key)"
+                :apy="profileStore.getStrategyApy(pocket.strategy_key)"
+                :loading="loadingPositions"
+                @click="navigateTo(`/pocket/${pocket.id}`)"
+                @deposit="handlePocketDeposit(pocket)"
+                @withdraw="handlePocketWithdraw(pocket)"
+                @schedule="openScheduleDialog(pocket)"
+                @delete="deleteDialogRef?.requestDelete(pocket)"
+              />
+            </div>
+
+            <!-- ── Explore strategies ── -->
+            <div class="mt-10">
+              <div class="flex items-baseline justify-between mb-4">
+                <p class="text-xs text-muted-foreground uppercase tracking-widest font-medium">Explore strategies</p>
+                <p class="text-[11px] text-muted-foreground/50">Live APY from top Morpho &amp; Aave vaults on Base</p>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <button
+                  v-for="strategy in STRATEGY_LIST" :key="strategy.key"
+                  class="group relative text-left rounded-2xl border bg-muted/20 transition-all p-4 overflow-hidden"
+                  :class="usedStrategyKeys.has(strategy.key)
+                    ? 'border-border/40 opacity-60 cursor-not-allowed'
+                    : 'border-border/60 hover:bg-muted/40 hover:border-primary/40 cursor-pointer'"
+                  @click="handleExploreStrategy(strategy.key)"
+                >
+                  <!-- Already-used badge -->
+                  <span
+                    v-if="usedStrategyKeys.has(strategy.key)"
+                    class="absolute top-2 right-2 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 leading-none"
+                  >
+                    Multi-vault coming soon
+                  </span>
+
+                  <!-- Top row: icon + APY badge -->
+                  <div class="flex items-start justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl flex items-center justify-center" :style="{ backgroundColor: strategy.assetColor + '20' }">
+                      <Icon :name="strategy.icon" class="w-5 h-5" :style="{ color: strategy.assetColor }" />
+                    </div>
+                    <div class="text-right" :class="{ 'mt-4': usedStrategyKeys.has(strategy.key) }">
+                      <p class="text-xs text-muted-foreground/70 leading-none mb-1">APY</p>
+                      <p class="text-lg font-bold tabular-nums leading-none">
+                        <span v-if="profileStore.getStrategyApy(strategy.key)" class="text-primary">
+                          {{ profileStore.getStrategyApy(strategy.key) }}%
+                        </span>
+                        <span v-else class="text-muted-foreground/40 text-sm">—</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  <!-- Name + description -->
+                  <p class="font-semibold text-sm mb-0.5">{{ strategy.name }}</p>
+                  <p class="text-xs text-muted-foreground mb-3 line-clamp-2">{{ strategy.subtitle }}</p>
+
+                  <!-- Bottom meta -->
+                  <div class="flex items-center justify-between pt-3 border-t border-border/40">
+                    <div class="flex items-center gap-1.5">
+                      <img :src="strategy.vaultLogo" class="w-4 h-4 rounded-full" @error="($event.target as HTMLImageElement).style.display='none'" />
+                      <span class="text-[11px] font-medium text-muted-foreground">{{ strategy.assetSymbol }}</span>
+                    </div>
+                    <span class="text-[11px] text-muted-foreground/60 tabular-nums">
+                      TVL {{ formatTvl(profileStore.getStrategyTvl(strategy.key)) }}
+                    </span>
+                  </div>
+
+                </button>
+              </div>
+            </div>
+
+            <!-- ── Dashboard: KPI + Chart + Activity + Allocation ── -->
+            <div v-if="pockets.length > 0" class="mt-10 space-y-6">
+              <div class="flex items-baseline justify-between">
+                <p class="text-xs text-muted-foreground uppercase tracking-widest font-medium">Dashboard</p>
+                <p class="text-[11px] text-muted-foreground/50">Live · refreshes on every action</p>
+              </div>
+
+              <!-- KPI strip -->
+              <AppDashboardKpi
+                :total-value-usd="dashTotalValueUsd"
+                :net-contributed-usd="netContributedUsd"
+                :unrealized-pnl-usd="unrealizedPnlUsd"
+                :pnl-percent="pnlPercent"
+                :avg-apy="dashAvgApy"
+                :projected-annual-usd="projectedAnnualUsd"
+                :loading="loadingPositions"
+              />
+
+              <!-- Chart (full width) -->
+              <AppDashboardChart
+                :series="chartSeries"
+                :current-value-usd="dashTotalValueUsd"
+                :loading="loadingTx"
+              />
+
+              <!-- Allocation + Activity (side-by-side on desktop) -->
+              <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr] gap-4">
+                <AppDashboardAllocation
+                  :items="allocation"
+                  :total-usd="dashTotalValueUsd"
+                />
+                <AppDashboardActivity
+                  :items="allTransactions"
+                  :loading="loadingTx"
+                  :limit="8"
+                />
+              </div>
+            </div>
+          </section>
+
         </div>
-        <h3 class="text-xl font-semibold mb-2">Start saving</h3>
-        <p class="text-sm text-muted-foreground max-w-xs mb-8">
-          Create your first pocket to begin growing your money automatically.
-        </p>
-        <Button
-          size="lg"
-          class="bg-primary text-primary-foreground hover:bg-primary/90"
-          @click="showCreateDialog = true"
-        >
-          <Icon name="lucide:plus" class="w-4 h-4 mr-1.5" />
-          Create Pocket
-        </Button>
-      </div>
+      </main>
 
-      <!-- Pocket cards -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <AppPocketCard
-          v-for="pocket in pockets"
-          :key="pocket.id"
-          :pocket="pocket"
-          :position="pocketPositions[pocket.id] || { shares: 0n, value: 0n }"
-          :asset-price="profileStore.getAssetPrice(pocket.strategy_key)"
-          :apy="profileStore.getStrategyApy(pocket.strategy_key)"
-          :profit="pocketProfits[pocket.id] ?? null"
-          :loading="loadingPositions"
-          @click="navigateTo(`/pocket/${pocket.id}`)"
-          @deposit="openDepositDialog(pocket, 'deposit')"
-          @withdraw="openDepositDialog(pocket, 'withdraw')"
-          @schedule="openScheduleDialog(pocket)"
-          @switch="openSwitchDialog(pocket)"
-          @delete="deleteDialogRef?.requestDelete(pocket)"
-        />
-      </div>
+      <LandingFooter v-if="isConnected" />
 
-      <!-- Trust footer -->
-      <div class="mt-12 pt-6 border-t border-border/50">
-        <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground/60">
-          <span class="flex items-center gap-1.5">
-            <Icon name="lucide:shield-check" class="w-3.5 h-3.5" />
-            Funds remain in your wallet
-          </span>
-          <span class="flex items-center gap-1.5">
-            <Icon name="lucide:link" class="w-3.5 h-3.5" />
-            Powered by curated onchain earning rails
-          </span>
-          <span class="flex items-center gap-1.5">
-            <Icon name="lucide:activity" class="w-3.5 h-3.5" />
-            Returns are variable
-          </span>
-        </div>
-      </div>
-    </main>
+      <AppOnboardingStory v-if="isConnected" />
 
-    <!-- Onboarding story (first-time users) -->
-    <AppOnboardingStory v-if="isConnected" />
+      <!-- Dialogs -->
+      <AppConnectModal v-model:open="showConnectModal" />
 
-    <!-- Dialogs -->
-    <AppConnectModal v-model:open="showConnectModal" />
+      <AppCreatePocketDialog
+        v-model:open="showCreateDialog"
+        :creating="creatingPocket"
+        :tx-state="txState"
+        :tx-error="txError"
+        :wallet-tokens="walletTokens"
+        :loading-tokens="loadingTokens"
+        :user-address="address"
+        :pre-select-strategy="depositPocketKey"
+        :initial-strategy="newPocketStrategy"
+        @create="handleCreatePocket"
+        @create-and-deposit="handleCreateAndDeposit"
+        @fetch-tokens="fetchWalletTokens"
+      />
 
-    <AppCreatePocketDialog
-      v-model:open="showCreateDialog"
-      :creating="creatingPocket"
-      @create="handleCreatePocket"
-    />
 
-    <AppDepositDialog
-      v-model:open="showDepositDialog"
-      :pocket="selectedPocket"
-      :position="pocketPosition"
-      :tx-state="txState"
-      :tx-hash="txHash"
-      :tx-error="txError"
-      :wallet-tokens="walletTokens"
-      :loading-tokens="loadingTokens"
-      :loading-position="loadingPositions"
-      :fetching-quote="fetchingQuote"
-      :fetching-withdraw-quote="fetchingWithdrawQuote"
-      :zap-quote="zapQuote"
-      :withdraw-zap-quote="withdrawZapQuote"
-      :is-direct-withdraw="isDirectWithdraw"
-      :native-token="NATIVE_TOKEN"
-      :asset-price="selectedPocket ? profileStore.getAssetPrice(selectedPocket.strategy_key) : 0"
-      @deposit="handleDeposit"
-      @withdraw="handleWithdraw"
-      @reset="reset"
-      @fetch-tokens="fetchWalletTokens"
-      @fetch-position="selectedPocket && profileStore.fetchPocketPosition(selectedPocket)"
-      @select-token="handleSelectToken"
-      @select-withdraw-token="handleSelectWithdrawToken"
-      @update-amount="handleUpdateAmount"
-      @change-mode="handleChangeMode"
-    />
+      <AppDeletePocketDialog
+        ref="deleteDialogRef"
+        v-model:open="showDeleteConfirm"
+        :pocket-positions="pocketPositions"
+        @confirmed="handlePocketDeleted"
+      />
 
-    <AppSwitchVaultDialog
-      v-model:open="showSwitchDialog"
-      :pocket="switchPocket"
-      :position="switchPocket ? (pocketPositions[switchPocket.id] || { shares: 0n, value: 0n }) : { shares: 0n, value: 0n }"
-      :asset-price="switchPocket ? profileStore.getAssetPrice(switchPocket.strategy_key) : 0"
-      :tx-state="txState"
-      :tx-hash="txHash"
-      :tx-error="txError"
-      :loading="switchLoading"
-      @confirm="handleSwitchVault"
-      @reset="reset"
-    />
+      <AppScheduleDialog
+        v-model:open="showScheduleDialog"
+        :pocket="schedulePocket"
+        :asset-price="schedulePocket ? profileStore.getAssetPrice(schedulePocket.strategy_key) : 0"
+        :saving="savingSchedule"
+        @save="handleSaveSchedule"
+        @remove="handleRemoveSchedule"
+      />
 
-    <AppDeletePocketDialog
-      ref="deleteDialogRef"
-      v-model:open="showDeleteConfirm"
-      :pocket-positions="pocketPositions"
-      @confirmed="handlePocketDeleted"
-    />
+      <AppFundWalletDialog
+        v-if="address"
+        v-model:open="showFundDialog"
+        :address="address"
+        :wallet-tokens="walletTokens"
+        :default-tab="fundDefaultTab"
+        @funded="refetchAll"
+      />
 
-    <AppScheduleDialog
-      v-model:open="showScheduleDialog"
-      :pocket="schedulePocket"
-      :asset-price="schedulePocket ? profileStore.getAssetPrice(schedulePocket.strategy_key) : 0"
-      :saving="savingSchedule"
-      @save="handleSaveSchedule"
-      @remove="handleRemoveSchedule"
-    />
-
-    <AppFundWalletDialog
-      v-if="address"
-      v-model:open="showFundDialog"
-      :address="address"
-    />
+      <AppPocketWithdrawDialog
+        v-model:open="showWithdrawDialog"
+        :pocket="withdrawPocket"
+        @done="refetchAll"
+      />
     </template>
   </div>
 </template>

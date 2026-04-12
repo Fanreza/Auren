@@ -4,6 +4,9 @@ import type { WalletToken } from '~/composables/useWalletTokens'
 import type { TxState } from '~/composables/useVault'
 import type { LifiQuote } from '~/composables/useLifi'
 import { useProfileStore } from '~/stores/useProfileStore'
+import { useVaultCatalog, type CatalogVault } from '~/composables/useVaultCatalog'
+import { useStrategyStore } from '~/stores/useStrategyStore'
+import type { StrategyWithAllocations } from '~/types/database'
 import type { PickedToken } from '~/components/app/AppTokenChainPicker.vue'
 import { today, getLocalTimeZone } from '@internationalized/date'
 import type { DateValue } from '@internationalized/date'
@@ -23,14 +26,23 @@ const props = defineProps<{
   initialStrategy?: StrategyKey | null  // Pre-fill strategy at step 1 without forcing deposit-only mode
 }>()
 
+export interface PocketVaultPayload {
+  vault_address: string
+  vault_chain_id: number
+  vault_protocol: string
+  vault_symbol: string
+  vault_asset: string
+}
+
 const emit = defineEmits<{
-  create: [payload: { name: string; purpose?: string; strategy_key: StrategyKey; target_amount?: number; timeline?: string }]
+  create: [payload: { name: string; purpose?: string; strategy_key: StrategyKey; target_amount?: number; timeline?: string; vault: PocketVaultPayload }]
   'create-and-deposit': [payload: {
     name: string
     purpose?: string
     target_amount?: number
     timeline?: string
     strategy_key: StrategyKey
+    vault: PocketVaultPayload
     fromChainId: number
     fromToken: `0x${string}`
     fromTokenSymbol: string
@@ -50,19 +62,35 @@ const emit = defineEmits<{
 }>()
 
 const profileStore = useProfileStore()
+const vaultCatalog = useVaultCatalog()
+const strategyStore = useStrategyStore()
 
-// Strategies already in use (1 pocket per strategy max)
-const usedStrategies = computed(() => {
-  const set = new Set<StrategyKey>()
-  for (const p of profileStore.pockets) set.add(p.strategy_key as StrategyKey)
-  return set
+// Vault addresses already used by this user's other pockets (1 vault = 1 pocket)
+const usedVaultAddresses = computed(() => {
+  return profileStore.pockets
+    .map(p => p.vault_address)
+    .filter((a): a is string => !!a)
+})
+
+// Ensure catalog + user's strategies are loaded when dialog opens
+watch(() => open.value, (v) => {
+  if (v) {
+    vaultCatalog.fetchCatalog()
+    if (profileStore.currentUser?.id) strategyStore.fetchMine(profileStore.currentUser.id)
+  }
 })
 
 // ── Step state ────────────────────────────────────────────────────────────────
-const step = ref(1) // 1=name 2=strategy 3=deposit 4=progress
+const step = ref(1) // 1=name 2=vault 3=deposit 4=progress
 const name = ref('')
 const purpose = ref('')
 const strategyKey = ref<StrategyKey | null>(null)
+/** Selected vault for deposit (post-Phase-1: 1 vault per pocket) */
+const selectedVault = ref<CatalogVault | null>(null)
+/** Step 2 mode: preset (top-APY per strategy) vs custom (browse all vaults) vs my (my strategies) */
+const vaultPickMode = ref<'preset' | 'custom' | 'my'>('preset')
+/** Currently expanded strategy (when user clicks a multi-vault strategy in "my" mode) */
+const expandedStrategyId = ref<string | null>(null)
 const depositSkipped = ref(false)
 
 // Target amount (optional) — formatted display with commas
@@ -295,6 +323,8 @@ function resetForm() {
   timeline.value = undefined
   showDatePicker.value = false
   strategyKey.value = null
+  selectedVault.value = null
+  vaultPickMode.value = 'preset'
   fromToken.value = null
   amount.value = ''
   quotes.value = []
@@ -327,8 +357,53 @@ function handleTokenSelected(t: PickedToken) {
   quotes.value = []
 }
 
+/**
+ * Pick a vault from a user-saved strategy. If the strategy has exactly 1
+ * allocation, select it directly. If multiple, expand the card and let user
+ * pick which specific vault (required because 1 pocket = 1 vault strict).
+ */
+function handleStrategyPick(strategy: StrategyWithAllocations) {
+  if (strategy.allocations.length === 1) {
+    const alloc = strategy.allocations[0]!
+    const vault = vaultCatalog.findByAddress(alloc.vault_address)
+    if (vault) {
+      selectedVault.value = vault
+      strategyKey.value = vault.strategyKey
+      expandedStrategyId.value = null
+    } else {
+      // Vault not in catalog (maybe non-Composer or removed) — show inline warning
+      expandedStrategyId.value = strategy.id
+    }
+  } else {
+    // Multi-vault strategy — expand to let user pick which vault to use
+    expandedStrategyId.value = expandedStrategyId.value === strategy.id ? null : strategy.id
+  }
+}
+
+/** Pick a specific vault from an expanded multi-vault strategy */
+function handleStrategyVaultPick(vaultAddress: string) {
+  const vault = vaultCatalog.findByAddress(vaultAddress)
+  if (vault) {
+    selectedVault.value = vault
+    strategyKey.value = vault.strategyKey
+    expandedStrategyId.value = null
+  }
+}
+
+function buildVaultPayload(): PocketVaultPayload | null {
+  if (!selectedVault.value) return null
+  const v = selectedVault.value
+  return {
+    vault_address: v.address,
+    vault_chain_id: v.chainId,
+    vault_protocol: v.protocol,
+    vault_symbol: v.vaultSymbol,
+    vault_asset: v.assetAddress,
+  }
+}
+
 function handleStartSaving() {
-  if (!strategyKey.value || !canDeposit.value || !fromToken.value) return
+  if (!strategyKey.value || !canDeposit.value || !fromToken.value || !selectedVault.value) return
 
   const addr = (fromToken.value.address === '0x0000000000000000000000000000000000000000'
     ? '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
@@ -336,6 +411,7 @@ function handleStartSaving() {
 
   const total = parseFloat(amount.value)
   step.value = 4
+  const vaultPayload = buildVaultPayload()!
 
   const payload = {
     name: name.value.trim() || `Pocket ${new Date().toLocaleDateString()}`,
@@ -343,27 +419,29 @@ function handleStartSaving() {
     target_amount: targetAmount.value,
     timeline: timeline.value ? timeline.value.toString() : undefined,
     strategy_key: strategyKey.value,
+    vault: vaultPayload,
     fromChainId: fromChainId.value,
     fromToken: addr,
     fromTokenSymbol: fromToken.value.symbol,
     fromTokenDecimals: fromToken.value.decimals,
     totalAmount: amount.value,
-    allocations: strategyAllocs.value.map((alloc, i) => ({
-      vaultAddress: alloc.address,
-      vaultChainId: alloc.chainId,
-      assetSymbol: alloc.assetSymbol,
-      protocol: alloc.protocol,
-      weight: alloc.weight,
-      amount: (total * alloc.weight).toString(),
-      quote: quotes.value[i] ?? null,
-    })),
+    // Single allocation now — 1 pocket = 1 vault
+    allocations: [{
+      vaultAddress: selectedVault.value.address,
+      vaultChainId: selectedVault.value.chainId,
+      assetSymbol: selectedVault.value.assetSymbol,
+      protocol: selectedVault.value.protocol,
+      weight: 1,
+      amount: total.toString(),
+      quote: quotes.value[0] ?? null,
+    }],
   }
 
   emit('create-and-deposit', payload)
 }
 
 function handleCreateEmpty() {
-  if (!strategyKey.value) return
+  if (!strategyKey.value || !selectedVault.value) return
   depositSkipped.value = true
   step.value = 4
   emit('create', {
@@ -372,6 +450,7 @@ function handleCreateEmpty() {
     target_amount: targetAmount.value,
     timeline: timeline.value ? timeline.value.toString() : undefined,
     strategy_key: strategyKey.value,
+    vault: buildVaultPayload()!,
   })
 }
 
@@ -496,23 +575,62 @@ const ctaLabel = computed(() => {
         </Button>
       </div>
 
-      <!-- ── Step 2: Strategy ── -->
+      <!-- ── Step 2: Pick a vault (1 pocket = 1 vault) ── -->
       <div v-else-if="step === 2" class="px-5 py-5">
-        <p class="text-xs text-muted-foreground mb-4">How do you want your money to grow?</p>
-        <div class="space-y-2.5">
+        <p class="text-xs text-muted-foreground mb-4">Where should your money earn?</p>
+
+        <!-- Mode toggle (3 modes) -->
+        <div class="flex gap-1 bg-muted/40 rounded-lg p-0.5 mb-3">
+          <button
+            class="flex-1 text-xs font-semibold py-2 rounded-md transition-colors"
+            :class="vaultPickMode === 'preset' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+            @click="vaultPickMode = 'preset'"
+          >Quick pick</button>
+          <button
+            class="flex-1 text-xs font-semibold py-2 rounded-md transition-colors"
+            :class="vaultPickMode === 'my' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+            @click="vaultPickMode = 'my'"
+          >My strategies</button>
+          <button
+            class="flex-1 text-xs font-semibold py-2 rounded-md transition-colors"
+            :class="vaultPickMode === 'custom' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'"
+            @click="vaultPickMode = 'custom'"
+          >All vaults</button>
+        </div>
+
+        <!-- Explore/create strategy CTAs -->
+        <div class="flex gap-2 mb-4">
+          <Button
+            variant="outline"
+            size="sm"
+            class="flex-1 h-8 text-[11px]"
+            @click="open = false; navigateTo('/strategy')"
+          >
+            <Icon name="lucide:compass" class="w-3 h-3 mr-1.5" />
+            Explore strategies
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            class="flex-1 h-8 text-[11px]"
+            @click="open = false; navigateTo('/strategy/create')"
+          >
+            <Icon name="lucide:plus" class="w-3 h-3 mr-1.5" />
+            Create your own
+          </Button>
+        </div>
+
+        <!-- Preset mode: top-APY vault per strategy -->
+        <div v-if="vaultPickMode === 'preset'" class="space-y-2.5">
           <button
             v-for="s in STRATEGY_LIST" :key="s.key"
             class="w-full rounded-xl border-2 p-4 text-left transition-all relative disabled:opacity-40 disabled:cursor-not-allowed"
-            :class="strategyKey === s.key ? 'border-primary bg-primary/5' : 'border-border hover:border-border/80'"
-            :disabled="usedStrategies.has(s.key)"
-            @click="strategyKey = s.key"
+            :class="selectedVault?.strategyKey === s.key ? 'border-primary bg-primary/5' : 'border-border hover:border-border/80'"
+            :disabled="!vaultCatalog.topForStrategy(s.key) || usedVaultAddresses.includes(vaultCatalog.topForStrategy(s.key)!.address)"
+            @click="() => { const top = vaultCatalog.topForStrategy(s.key); if (top) { selectedVault = top; strategyKey = s.key; } }"
           >
             <span
-              v-if="usedStrategies.has(s.key)"
-              class="absolute top-3 right-3 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20"
-            >Multi-vault coming soon</span>
-            <span
-              v-else-if="STRATEGY_META[s.key].popular"
+              v-if="STRATEGY_META[s.key].popular"
               class="absolute top-3 right-3 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/15 text-primary"
             >Most Popular</span>
 
@@ -525,43 +643,158 @@ const ctaLabel = computed(() => {
                   <p class="font-semibold text-sm">{{ STRATEGY_META[s.key].title }}</p>
                   <span class="text-xs" :class="STRATEGY_META[s.key].riskColor">{{ STRATEGY_META[s.key].riskLabel }}</span>
                 </div>
-                <!-- Token badge -->
                 <div class="flex items-center gap-1.5 mt-1.5">
                   <span class="w-2 h-2 rounded-full shrink-0" :style="{ backgroundColor: s.assetColor }" />
                   <span class="text-xs text-muted-foreground">{{ s.assetLabel }} · {{ s.assetSymbol }}</span>
-                  <span v-if="s.key !== 'conservative'" class="text-[10px] text-muted-foreground/40 ml-1">+ price growth</span>
                 </div>
-
-                <!-- APY -->
-                <div class="flex items-baseline gap-2 mt-2.5">
-                  <span class="text-base font-bold text-primary">{{ getWeightedApy(s.key) }}</span>
-                  <span class="text-xs text-muted-foreground">APY</span>
-                </div>
-
-                <!-- Vault list -->
-                <div v-if="getVaultAllocs(s.key).length" class="mt-2 rounded-lg bg-background/40 border border-border/30 divide-y divide-border/20">
-                  <div
-                    v-for="v in getVaultAllocs(s.key)" :key="v.address"
-                    class="flex items-center gap-2 px-2.5 py-1.5"
-                  >
-                    <span class="text-[11px] font-semibold text-foreground/80 truncate">{{ v.vaultSymbol }}</span>
-                    <span class="text-[10px] text-muted-foreground/50">{{ v.protocol }}</span>
-                    <span class="text-[11px] font-bold text-primary ml-auto shrink-0">{{ v.apy > 0 ? (v.apy * 100).toFixed(1) + '%' : '—' }}</span>
-                  </div>
+                <div class="mt-2">
+                  <template v-if="vaultCatalog.topForStrategy(s.key)">
+                    <div class="flex items-baseline gap-2">
+                      <span class="text-base font-bold text-primary">
+                        {{ (vaultCatalog.topForStrategy(s.key)!.apy * 100).toFixed(2) }}%
+                      </span>
+                      <span class="text-xs text-muted-foreground">APY</span>
+                    </div>
+                    <p class="text-[11px] text-muted-foreground/60 mt-1">
+                      {{ vaultCatalog.topForStrategy(s.key)!.vaultSymbol }} · {{ vaultCatalog.topForStrategy(s.key)!.protocol }}
+                    </p>
+                  </template>
+                  <span v-else class="text-xs text-muted-foreground/50">No vault available</span>
                 </div>
               </div>
-              <div v-if="strategyKey === s.key" class="absolute top-4 right-4 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+              <div v-if="selectedVault?.strategyKey === s.key" class="absolute top-4 right-4 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
                 <Icon name="lucide:check" class="w-3 h-3 text-primary-foreground" />
               </div>
             </div>
           </button>
         </div>
 
+        <!-- My strategies mode: user's copied + created strategies -->
+        <div v-else-if="vaultPickMode === 'my'" class="space-y-2">
+          <!-- Loading skeleton -->
+          <div v-if="strategyStore.loading && !strategyStore.myStrategies.length" class="space-y-2">
+            <div
+              v-for="i in 3" :key="i"
+              class="rounded-xl border border-border/60 bg-muted/20 p-3 flex items-center gap-3"
+            >
+              <Skeleton class="w-9 h-9 rounded-lg" />
+              <div class="flex-1 space-y-1.5">
+                <Skeleton class="h-4 w-28" />
+                <Skeleton class="h-3 w-20" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty state -->
+          <div v-else-if="!strategyStore.myStrategies.length" class="rounded-xl border border-dashed border-border/60 p-6 text-center">
+            <Icon name="lucide:layers" class="w-7 h-7 text-muted-foreground/40 mb-2 mx-auto" />
+            <p class="text-xs text-muted-foreground mb-3">No saved strategies yet</p>
+            <div class="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                class="flex-1 h-8 text-[11px]"
+                @click="open = false; navigateTo('/strategy')"
+              >
+                <Icon name="lucide:compass" class="w-3 h-3 mr-1.5" /> Browse
+              </Button>
+              <Button
+                size="sm"
+                class="flex-1 h-8 text-[11px]"
+                @click="open = false; navigateTo('/strategy/create')"
+              >
+                <Icon name="lucide:plus" class="w-3 h-3 mr-1.5" /> Create
+              </Button>
+            </div>
+          </div>
+
+          <!-- My strategies list -->
+          <template v-else>
+            <button
+              v-for="s in strategyStore.myStrategies" :key="s.id"
+              type="button"
+              class="w-full text-left rounded-xl border-2 p-3 transition-all"
+              :class="expandedStrategyId === s.id
+                ? 'border-primary bg-primary/5'
+                : selectedVault && s.allocations.some(a => a.vault_address.toLowerCase() === selectedVault?.address.toLowerCase())
+                  ? 'border-primary bg-primary/5'
+                  : 'border-border hover:border-border/80 bg-muted/20'"
+              @click="handleStrategyPick(s)"
+            >
+              <div class="flex items-center gap-3">
+                <div
+                  class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                  :style="{ backgroundColor: (s.cover_color ?? '#86B238') + '20' }"
+                >
+                  <Icon :name="s.icon ?? 'lucide:layers'" class="w-4 h-4" :style="{ color: s.cover_color ?? '#86B238' }" />
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-bold truncate">{{ s.name }}</p>
+                  <p class="text-[11px] text-muted-foreground/70">
+                    {{ s.allocations.length }} vault{{ s.allocations.length !== 1 ? 's' : '' }}
+                    <template v-if="s.is_system"> · System</template>
+                    <template v-else-if="s.forked_from_id"> · Copied</template>
+                    <template v-else> · Custom</template>
+                  </p>
+                </div>
+                <Icon
+                  v-if="s.allocations.length > 1"
+                  name="lucide:chevron-down"
+                  class="w-4 h-4 text-muted-foreground/60 transition-transform"
+                  :class="{ 'rotate-180': expandedStrategyId === s.id }"
+                />
+              </div>
+
+              <!-- Expanded sub-picker (for multi-vault strategies) -->
+              <div
+                v-if="expandedStrategyId === s.id && s.allocations.length > 1"
+                class="mt-3 pt-3 border-t border-border/30 space-y-1.5"
+                @click.stop
+              >
+                <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-1">
+                  Pick which vault to use (1 pocket = 1 vault)
+                </p>
+                <button
+                  v-for="alloc in s.allocations" :key="alloc.id"
+                  type="button"
+                  class="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors"
+                  :class="selectedVault?.address.toLowerCase() === alloc.vault_address.toLowerCase()
+                    ? 'border-primary bg-primary/10'
+                    : usedVaultAddresses.map(a => a.toLowerCase()).includes(alloc.vault_address.toLowerCase())
+                      ? 'border-border/30 bg-muted/20 opacity-50 cursor-not-allowed'
+                      : 'border-border/60 hover:border-primary/40'"
+                  :disabled="usedVaultAddresses.map(a => a.toLowerCase()).includes(alloc.vault_address.toLowerCase())"
+                  @click="handleStrategyVaultPick(alloc.vault_address)"
+                >
+                  <div class="flex-1 min-w-0 text-left">
+                    <p class="text-xs font-semibold truncate">{{ alloc.vault_symbol ?? alloc.asset_symbol }}</p>
+                    <p class="text-[10px] text-muted-foreground/70 truncate">
+                      {{ alloc.protocol ?? 'Unknown' }} · {{ (alloc.weight * 100).toFixed(0) }}% of strategy
+                    </p>
+                  </div>
+                  <span
+                    v-if="usedVaultAddresses.map(a => a.toLowerCase()).includes(alloc.vault_address.toLowerCase())"
+                    class="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0"
+                  >In use</span>
+                </button>
+              </div>
+            </button>
+          </template>
+        </div>
+
+        <!-- Custom mode: full vault picker -->
+        <AppVaultPicker
+          v-else
+          v-model="selectedVault"
+          :disabled-addresses="usedVaultAddresses"
+          @update:model-value="(v) => { if (v) strategyKey = v.strategyKey }"
+        />
+
         <div class="flex gap-3 mt-5">
           <Button variant="outline" class="h-11 px-4" @click="step--">
             <Icon name="lucide:arrow-left" class="w-4 h-4" />
           </Button>
-          <Button class="flex-1 h-11" :disabled="!strategyKey" @click="step++">
+          <Button class="flex-1 h-11" :disabled="!selectedVault" @click="step++">
             Continue <Icon name="lucide:arrow-right" class="w-4 h-4 ml-1.5" />
           </Button>
         </div>

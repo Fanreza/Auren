@@ -38,19 +38,20 @@ function fmt(n: number) {
           <div class="animate-fade-up mb-7">
             <span class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-medium">
               <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              DeFi yield. Zero DeFi complexity.
+              Three ways to earn. One smart account.
             </span>
           </div>
 
           <!-- Headline -->
           <h1 class="animate-fade-up [animation-delay:80ms] text-[2.8rem] sm:text-5xl lg:text-[3.4rem] font-bold tracking-[-0.04em] leading-[1.06] mb-6">
-            Saving should<br />feel this simple.
+            DeFi yield,<br />without the DeFi.
           </h1>
 
           <!-- Sub -->
           <p class="animate-fade-up [animation-delay:160ms] text-base sm:text-lg text-muted-foreground leading-relaxed mb-10 max-w-lg">
-            Create a pocket for every goal. Deposit from any chain in any token.
-            Earn real yield from leading DeFi protocols — automatically.
+            Save toward goals with <span class="text-foreground font-medium">Pockets</span>, browse vaults in
+            <span class="text-foreground font-medium">Earn</span>, or build multi-vault recipes in
+            <span class="text-foreground font-medium">Strategies</span>. Deposit from any chain, any token — gas paid in USDC.
           </p>
 
           <!-- CTAs -->
@@ -59,7 +60,7 @@ function fmt(n: number) {
               class="inline-flex items-center justify-center gap-2 h-12 px-8 rounded-full bg-primary text-primary-foreground text-base font-semibold shadow-xl shadow-primary/30 hover:bg-primary/90 hover:shadow-primary/45 active:scale-[0.97] transition-all duration-200"
               @click="navigateTo('/app')"
             >
-              Start your first pocket
+              Open the app
               <Icon name="lucide:arrow-right" class="w-4 h-4" />
             </button>
             <a
@@ -79,12 +80,12 @@ function fmt(n: number) {
             <div class="hidden sm:block w-px h-3 bg-border/50" />
             <div class="flex items-center gap-1.5 text-xs text-muted-foreground/50">
               <Icon name="lucide:fuel" class="w-3.5 h-3.5 text-primary/50" />
-              First deposit free
+              Gas paid in USDC
             </div>
             <div class="hidden sm:block w-px h-3 bg-border/50" />
             <div class="flex items-center gap-1.5 text-xs text-muted-foreground/50">
-              <Icon name="lucide:globe" class="w-3.5 h-3.5 text-primary/50" />
-              Any chain
+              <Icon name="lucide:zap" class="w-3.5 h-3.5 text-primary/50" />
+              Single-tx deposits
             </div>
             <div class="hidden sm:block w-px h-3 bg-border/50" />
             <div class="flex items-center gap-1.5 text-xs text-muted-foreground/50">

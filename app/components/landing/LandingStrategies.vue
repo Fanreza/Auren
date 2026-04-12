@@ -15,16 +15,16 @@ const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
 
 const details: Record<string, { tagline: string; features: string[] }> = {
   conservative: {
-    tagline: 'Your dollars earn daily interest — like a savings account, but higher yield.',
-    features: ['Stable, predictable returns', 'Dollar-pegged (USDC)', 'Best for short-term goals'],
+    tagline: 'Your dollars earn daily interest from top-rated USDC vaults — stable, predictable, no token risk.',
+    features: ['USDC across Morpho & Aave', 'Stable, predictable returns', 'Best for short-term goals'],
   },
   balanced: {
-    tagline: 'Ride Bitcoin\'s long-term growth while your savings stay productive.',
-    features: ['Tied to Bitcoin price', 'Moderate risk & reward', 'Best for 1–3 year goals'],
+    tagline: 'Ride Bitcoin\'s long-term growth while cbBTC keeps earning vault yield in the background.',
+    features: ['cbBTC vault exposure', 'Moderate risk & reward', 'Best for 1–3 year goals'],
   },
   aggressive: {
-    tagline: 'Maximum exposure to Ethereum. Higher potential, higher swings.',
-    features: ['Tied to Ethereum price', 'Highest risk & potential', 'Best for long horizons'],
+    tagline: 'Maximum Ethereum exposure via WETH and LST vaults. Higher potential, higher swings.',
+    features: ['WETH + LST vaults', 'Highest risk & upside', 'Best for long horizons'],
   },
 }
 
@@ -78,13 +78,13 @@ const colors: Record<string, {
         class="text-center mb-16 transition-all duration-700 ease-out"
         :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
       >
-        <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">Strategies</p>
+        <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">System strategies</p>
         <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-[-0.03em]">
-          Pick how your pocket grows
+          Start with a preset.<br />Or build your own.
         </h2>
         <p class="mt-4 text-muted-foreground text-base sm:text-lg max-w-xl mx-auto">
-          Every pocket runs on one of three strategies. You pick it when you create the pocket
-          — and can switch anytime.
+          Three curated strategies cover the most common goals. Want something custom?
+          The Strategies tab lets you combine any Composer-routable vaults on Base with weight sliders.
         </p>
       </div>
 
@@ -153,6 +153,35 @@ const colors: Record<string, {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Build-your-own CTA strip -->
+      <div
+        class="mt-10 flex flex-col sm:flex-row items-center justify-between gap-5 p-6 sm:p-7 rounded-2xl bg-card/60 border border-border transition-all duration-700 ease-out"
+        :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'"
+        style="transition-delay: 540ms"
+      >
+        <div class="flex items-start gap-4 text-center sm:text-left">
+          <div class="hidden sm:flex w-11 h-11 shrink-0 rounded-xl bg-primary/10 items-center justify-center">
+            <Icon name="lucide:layers" class="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h3 class="text-base sm:text-lg font-bold text-foreground mb-1">
+              Need something the presets don't cover?
+            </h3>
+            <p class="text-sm text-muted-foreground max-w-lg">
+              Combine any number of vaults — USDC, cbBTC, WETH, EURC, LBTC, weETH and more —
+              with weight sliders that auto-rebalance. Publish, fork, or keep it private.
+            </p>
+          </div>
+        </div>
+        <button
+          class="inline-flex items-center gap-2 h-11 px-6 rounded-full bg-primary text-primary-foreground text-sm font-semibold shadow-lg shadow-primary/25 hover:bg-primary/90 active:scale-[0.97] transition-all duration-200 shrink-0"
+          @click="navigateTo('/strategy/create')"
+        >
+          Open the strategy builder
+          <Icon name="lucide:arrow-right" class="w-4 h-4" />
+        </button>
       </div>
 
     </div>

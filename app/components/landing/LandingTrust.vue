@@ -10,27 +10,27 @@ const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
 const poweredBy = [
   {
     icon: 'lucide:route',
-    name: 'LI.FI',
+    name: 'LI.FI Composer',
     role: 'Crosschain routing',
-    description: 'Routes your deposit from any chain through the optimal bridge and swap path directly into the vault — all in one transaction.',
+    description: 'Composer routes your deposit through the optimal bridge + swap + vault deposit path in a single transaction. Every vault we surface is probed for Composer compatibility.',
     color: 'text-brand-teal',
     iconBg: 'bg-brand-teal/10',
     border: 'border-brand-teal/15',
   },
   {
     icon: 'lucide:landmark',
-    name: 'Morpho · Aave · Euler',
+    name: 'Morpho · Aave · Yearn · Euler',
     role: 'Yield vaults',
-    description: 'Your savings sit in audited, battle-tested DeFi lending protocols generating real yield from on-chain liquidity markets.',
+    description: 'Funds sit in audited, battle-tested ERC-4626 vaults from leading DeFi lending protocols on Base. Real yield from on-chain liquidity — no native tokens, no rebases.',
     color: 'text-brand-gold',
     iconBg: 'bg-brand-gold/10',
     border: 'border-brand-gold/15',
   },
   {
     icon: 'lucide:fingerprint',
-    name: 'Privy',
-    role: 'Embedded wallets',
-    description: 'Creates a non-custodial smart wallet tied to your email — no MetaMask, no seed phrases, no setup. You own the keys.',
+    name: 'Privy + Pimlico',
+    role: 'Smart account & paymaster',
+    description: 'Privy creates an embedded wallet from your email. Pimlico\'s ERC-4337 smart account batches actions and pays gas in USDC — you never need to hold ETH.',
     color: 'text-brand-sage',
     iconBg: 'bg-brand-sage/10',
     border: 'border-brand-sage/15',
@@ -39,9 +39,9 @@ const poweredBy = [
 
 const guarantees = [
   { icon: 'lucide:shield-check', label: 'Non-custodial', sub: 'Only you move your funds' },
-  { icon: 'lucide:file-check', label: 'Audited contracts', sub: 'Open-source, verifiable' },
+  { icon: 'lucide:file-check', label: 'Audited vaults', sub: 'Morpho, Aave, Yearn, Euler' },
   { icon: 'lucide:search', label: 'On-chain transparent', sub: 'Verify every tx yourself' },
-  { icon: 'lucide:globe', label: 'Crosschain native', sub: '20+ chains supported' },
+  { icon: 'lucide:fuel', label: 'Gas paid in USDC', sub: 'No ETH required' },
 ]
 </script>
 
@@ -122,13 +122,13 @@ const guarantees = [
             Ready to save smarter?
           </h3>
           <p class="text-muted-foreground mb-8 max-w-sm mx-auto">
-            Sign in with email. No crypto setup. First deposit is fee-free. Start in under a minute.
+            Sign in with email. No seed phrases, no native gas. Pick a pocket, browse Earn, or fork a strategy in under a minute.
           </p>
           <button
             class="inline-flex items-center gap-2 h-12 px-8 rounded-full bg-primary text-primary-foreground text-base font-semibold shadow-xl shadow-primary/30 hover:bg-primary/90 active:scale-[0.98] transition-all duration-200"
             @click="navigateTo('/app')"
           >
-            Create a pocket
+            Open the app
             <Icon name="lucide:arrow-right" class="w-4 h-4" />
           </button>
         </div>

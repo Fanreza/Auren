@@ -270,24 +270,36 @@ export const useProfileStore = defineStore('profile', () => {
               return true
             })
 
+            // Populate display data from the top static candidate immediately
+            // so Explore cards always show APY/TVL, even before Composer probe.
+            if (staticallyOk.length && !vaults.length) {
+              vaults = staticallyOk.slice(0, VAULTS_PER_TOKEN)
+            }
+
             // Walk sorted candidates top-down, probing Composer compatibility.
-            // Stop once we've found VAULTS_PER_TOKEN compatible ones.
+            // This runs in background — if probe succeeds we refine `vaults`
+            // to only Composer-compatible ones, but display is never empty.
             const composerVaults: any[] = []
             for (const candidate of staticallyOk) {
               if (composerVaults.length >= VAULTS_PER_TOKEN) break
-              const ok = await isComposerCompatible(
-                candidate.address,
-                strategy.assetAddress,
-                strategy.decimals,
-              )
-              if (ok) {
-                composerVaults.push(candidate)
-              } else if (import.meta.dev) {
-                const proto = typeof candidate.protocol === 'object' ? candidate.protocol?.name : candidate.protocol
-                console.warn(`[vault] ${candidate.name} (${proto}) rejected: not Composer-compatible`)
+              try {
+                const ok = await isComposerCompatible(
+                  candidate.address,
+                  strategy.assetAddress,
+                  strategy.decimals,
+                )
+                if (ok) {
+                  composerVaults.push(candidate)
+                } else if (import.meta.dev) {
+                  const proto = typeof candidate.protocol === 'object' ? candidate.protocol?.name : candidate.protocol
+                  console.warn(`[vault] ${candidate.name} (${proto}) rejected: not Composer-compatible`)
+                }
+              } catch (e) {
+                if (import.meta.dev) console.warn('[vault] probe threw, keeping static candidate', e)
               }
             }
-            vaults = composerVaults
+            // If any composer vault passed, use it. Otherwise keep static fallback.
+            if (composerVaults.length) vaults = composerVaults
             if (vaults.length) break
           } catch (e) {
             console.error(`[vault] ${symbol}: fetch failed`, e)
@@ -335,29 +347,25 @@ export const useProfileStore = defineStore('profile', () => {
     )
   }
 
-  /** Read onchain position from all vaults for a pocket's token.
-   *  All vaults hold the same token → balances are addable. */
+  /** Read onchain position for a pocket. Post-Phase-1: pocket has explicit
+   *  vault_address, so we read balance from that specific vault only. */
   async function fetchPocketPosition(pocket: DbPocket) {
     const strategy = STRATEGIES[pocket.strategy_key as StrategyKey]
     if (!strategy) return
 
-    const allocs = lifiVaultAddresses.value[pocket.strategy_key] ?? []
-    const legacy = LEGACY_VAULTS[pocket.strategy_key as StrategyKey] ?? []
     const { address: userAddr, getPublicClient } = usePrivyAuth()
     if (!userAddr.value) return
 
     try {
       const pub = getPublicClient()
-      // Merge active + legacy vault addresses; dedupe
-      const addrSet = new Set<string>()
+      // Phase 1: pocket owns exactly one vault
       const vaultAddrs: `0x${string}`[] = []
-      for (const a of allocs) {
-        const k = a.address.toLowerCase()
-        if (!addrSet.has(k)) { addrSet.add(k); vaultAddrs.push(a.address as `0x${string}`) }
-      }
-      for (const l of legacy) {
-        const k = l.address.toLowerCase()
-        if (!addrSet.has(k)) { addrSet.add(k); vaultAddrs.push(l.address) }
+      if (pocket.vault_address) {
+        vaultAddrs.push(pocket.vault_address as `0x${string}`)
+      } else {
+        // Fallback for legacy pockets without vault_address — use current top snapshot
+        const allocs = lifiVaultAddresses.value[pocket.strategy_key] ?? []
+        for (const a of allocs) vaultAddrs.push(a.address as `0x${string}`)
       }
       if (!vaultAddrs.length) vaultAddrs.push(strategy.vaultAddress)
 
@@ -420,8 +428,8 @@ export const useProfileStore = defineStore('profile', () => {
         fetchLifiPortfolio(userAddress),
         ...pockets.value.map(p => fetchPocketPosition(p)),
       ])
-      // Reconcile duplicate strategies: vault balance is shared across pockets
-      // of the same strategy, so split proportionally by net contributed.
+      // Phase 1: reconciliation no longer needed — unique vault per pocket enforced at DB level.
+      // Safety net still runs for any legacy pockets that somehow share vaults.
       await reconcileDuplicateStrategies()
     } finally {
       loadingPositions.value = false

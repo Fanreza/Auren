@@ -10,27 +10,27 @@ const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
 const steps = [
   {
     number: '01',
-    icon: 'lucide:target',
-    title: 'Create a pocket',
-    description: 'Give it a name, set a savings goal, and pick a yield strategy. Conservative keeps you in stablecoins. Balanced rides Bitcoin. Aggressive goes full Ethereum.',
-    tag: 'Takes 30 seconds',
+    icon: 'lucide:layout-grid',
+    title: 'Pick your path',
+    description: 'Open a Pocket for goal-based saving, browse the Earn catalog for any vault on Base, or fork a Strategy from the marketplace. Three entry points, same smart account.',
+    tag: 'Email sign-in, 30s',
     tagIcon: 'lucide:clock',
   },
   {
     number: '02',
     icon: 'lucide:send',
-    title: 'Deposit from any chain',
-    description: 'Connect any wallet on any network. Send USDT on Polygon, ETH on Arbitrum, USDC anywhere — whatever you have. LI.FI routes it to the vault automatically.',
-    tag: 'No bridging needed',
+    title: 'Fund from any chain',
+    description: 'Send USDT on Polygon, ETH on Arbitrum, or USDC from anywhere — whatever you already have. LI.FI Composer swaps, bridges, and deposits in one transaction.',
+    tag: 'Single-tx routing',
     tagIcon: 'lucide:zap',
   },
   {
     number: '03',
     icon: 'lucide:trending-up',
-    title: 'Watch it grow',
-    description: 'Your deposit earns real yield inside audited DeFi vaults — Morpho, Aave, and others. Yield compounds daily. Withdraw any amount, any time, with zero penalties.',
-    tag: 'Real yield, daily',
-    tagIcon: 'lucide:coins',
+    title: 'Earn — gas in USDC',
+    description: 'Your funds sit in audited Morpho, Aave, Euler, Compound, and Yearn vaults. Yield compounds daily. Pimlico\'s ERC-20 paymaster pays gas in USDC — you never need ETH.',
+    tag: 'No native gas required',
+    tagIcon: 'lucide:fuel',
   },
 ]
 </script>

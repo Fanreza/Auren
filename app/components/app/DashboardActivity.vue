@@ -66,9 +66,22 @@ function fmtUsd(n: number): string {
       <p class="text-[11px] text-muted-foreground/50">{{ items.length }} total</p>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading && !items.length" class="flex justify-center py-8">
-      <Icon name="lucide:loader-2" class="w-4 h-4 animate-spin text-muted-foreground" />
+    <!-- Loading skeleton -->
+    <div v-if="loading && !items.length" class="space-y-1">
+      <div
+        v-for="i in 5" :key="i"
+        class="flex items-center gap-3 px-2 py-2.5"
+      >
+        <Skeleton class="w-8 h-8 rounded-lg shrink-0" />
+        <div class="flex-1 space-y-1.5">
+          <Skeleton class="h-3.5 w-32" />
+          <Skeleton class="h-2.5 w-16" />
+        </div>
+        <div class="text-right space-y-1 shrink-0">
+          <Skeleton class="h-3.5 w-14" />
+          <Skeleton class="h-2 w-8 ml-auto" />
+        </div>
+      </div>
     </div>
 
     <!-- Empty -->

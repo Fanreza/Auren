@@ -447,7 +447,7 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
               {{ parseFloat(vaultBalance).toLocaleString('en-US', { maximumFractionDigits: 6 }) }} {{ strategy?.assetSymbol }}
               <button v-if="parseFloat(vaultBalance) > 0" class="text-primary font-semibold ml-1" @click="setMax">MAX</button>
             </span>
-            <span v-else class="text-[11px] text-muted-foreground">Loading...</span>
+            <Skeleton v-else class="h-3 w-20" />
           </div>
           <template v-if="balanceTooSmall">
             <p class="text-sm text-muted-foreground py-2">

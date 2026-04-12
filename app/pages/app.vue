@@ -175,24 +175,44 @@ const creatingPocket = ref(false)
 watch(showWithdrawDialog, (v) => { if (!v) refetchAll() })
 watch(showCreateDialog, (v) => { if (!v) { depositPocketKey.value = null; refetchAll() } })
 
+interface PocketVaultPayload {
+  vault_address: string
+  vault_chain_id: number
+  vault_protocol: string
+  vault_symbol: string
+  vault_asset: string
+}
+
 async function handleCreatePocket(payload: {
   name: string
   purpose?: string
   target_amount?: number
   timeline?: string
   strategy_key: StrategyKey
+  vault: PocketVaultPayload
 }) {
   if (!currentUser.value) return
   creatingPocket.value = true
   try {
     const pocket = await profileStore.createPocket({
       user_id: currentUser.value.id,
-      ...payload,
+      name: payload.name,
+      purpose: payload.purpose,
+      target_amount: payload.target_amount,
+      timeline: payload.timeline,
+      strategy_key: payload.strategy_key,
+      vault_address: payload.vault.vault_address,
+      vault_chain_id: payload.vault.vault_chain_id,
+      vault_protocol: payload.vault.vault_protocol,
+      vault_symbol: payload.vault.vault_symbol,
+      vault_asset: payload.vault.vault_asset,
     })
     if (pocket) {
       showCreateDialog.value = false
       await refetchAll()
     }
+  } catch (e: any) {
+    toast.error(e?.data?.message ?? e?.message ?? 'Failed to create pocket')
   } finally {
     creatingPocket.value = false
   }
@@ -204,6 +224,7 @@ async function handleCreateAndDeposit(payload: {
   target_amount?: number
   timeline?: string
   strategy_key: StrategyKey
+  vault: PocketVaultPayload
   fromChainId: number
   fromToken: `0x${string}`
   fromTokenSymbol: string
@@ -235,9 +256,18 @@ async function handleCreateAndDeposit(payload: {
         target_amount: payload.target_amount,
         timeline: payload.timeline,
         strategy_key: payload.strategy_key,
+        vault_address: payload.vault.vault_address,
+        vault_chain_id: payload.vault.vault_chain_id,
+        vault_protocol: payload.vault.vault_protocol,
+        vault_symbol: payload.vault.vault_symbol,
+        vault_asset: payload.vault.vault_asset,
       })
     }
-    if (!pocket) return
+    if (!pocket) {
+      creatingPocket.value = false
+      toast.error('Failed to create pocket')
+      return
+    }
 
     selectedPocket.value = pocket
     lastTxType.value = 'deposit'
@@ -483,6 +513,7 @@ const averageApy = computed(() => {
         @go-profile="navigateTo('/profile')"
         @logout="handleLogout"
       />
+      <AppTabBar v-if="isConnected" class="mt-3" />
 
       <!-- Not connected -->
       <AppHero v-if="!isConnected" @connect="showConnectModal = true" />
@@ -593,9 +624,32 @@ const averageApy = computed(() => {
           <section class="pt-4 lg:pt-8">
             <p class="text-xs text-muted-foreground uppercase tracking-widest mb-4 font-medium">Pockets</p>
 
-            <!-- Loading -->
-            <div v-if="loadingPockets" class="flex justify-center py-16">
-              <Icon name="lucide:loader-2" class="w-5 h-5 animate-spin text-muted-foreground" />
+            <!-- Loading skeleton -->
+            <div v-if="loadingPockets" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div
+                v-for="i in 2" :key="i"
+                class="rounded-2xl border border-border/60 bg-muted/20 p-5 space-y-4"
+              >
+                <div class="flex items-start justify-between">
+                  <div class="flex items-center gap-3">
+                    <Skeleton class="w-9 h-9 rounded-xl" />
+                    <div class="space-y-1">
+                      <Skeleton class="h-4 w-24" />
+                      <Skeleton class="h-3 w-16" />
+                    </div>
+                  </div>
+                  <Skeleton class="h-5 w-16 rounded-full" />
+                </div>
+                <Skeleton class="h-8 w-32" />
+                <Skeleton class="h-3 w-40" />
+                <Skeleton class="h-1.5 w-full rounded-full" />
+                <div class="flex gap-2 pt-2">
+                  <Skeleton class="flex-1 h-9 rounded-xl" />
+                  <Skeleton class="flex-1 h-9 rounded-xl" />
+                  <Skeleton class="w-9 h-9 rounded-xl" />
+                  <Skeleton class="w-9 h-9 rounded-xl" />
+                </div>
+              </div>
             </div>
 
             <!-- Empty state -->
@@ -636,9 +690,28 @@ const averageApy = computed(() => {
 
             <!-- ── Explore strategies ── -->
             <div class="mt-10">
-              <div class="flex items-baseline justify-between mb-4">
+              <div class="flex items-baseline justify-between mb-4 gap-2 flex-wrap">
                 <p class="text-xs text-muted-foreground uppercase tracking-widest font-medium">Explore strategies</p>
-                <p class="text-[11px] text-muted-foreground/50">Live APY from top Morpho &amp; Aave vaults on Base</p>
+                <div class="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 text-[11px] text-primary"
+                    @click="navigateTo('/strategy')"
+                  >
+                    <Icon name="lucide:compass" class="w-3 h-3 mr-1" />
+                    Explore marketplace
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 text-[11px] text-primary"
+                    @click="navigateTo('/strategy/create')"
+                  >
+                    <Icon name="lucide:plus" class="w-3 h-3 mr-1" />
+                    Create your own
+                  </Button>
+                </div>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">

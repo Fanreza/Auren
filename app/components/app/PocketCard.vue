@@ -177,7 +177,7 @@ function displayUsd(value: number): string {
             <Skeleton class="h-3.5 w-36 inline-block" />
           </template>
           <template v-else>
-            {{ pocket.target_amount ? `${displayUsd(usdValue)} of ${displayUsd(pocket.target_amount)}` : `${strategy?.assetSymbol} vault` }}
+            {{ pocket.target_amount ? `${displayUsd(usdValue)} of ${displayUsd(pocket.target_amount)}` : (pocket.vault_symbol ?? `${strategy?.assetSymbol} vault`) }}
             <span v-if="timelineDisplay" class="ml-1.5" :class="timelineDisplay.urgent ? 'text-amber-400' : ''">
               · {{ timelineDisplay.label }}
             </span>

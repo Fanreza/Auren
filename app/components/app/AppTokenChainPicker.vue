@@ -345,8 +345,11 @@ function selectToken(t: TokenRow) {
                 {{ chainSearch ? 'Results' : 'Chains A-Z' }}
               </span>
             </div>
-            <div v-if="loadingChains" class="px-3 py-2 text-xs text-muted-foreground flex items-center gap-2">
-              <Icon name="lucide:loader-2" class="w-3.5 h-3.5 animate-spin" /> Loading…
+            <div v-if="loadingChains" class="px-3 py-2 space-y-1.5">
+              <div v-for="i in 5" :key="i" class="flex items-center gap-2.5">
+                <Skeleton class="w-5 h-5 rounded-full shrink-0" />
+                <Skeleton class="h-3 w-24" />
+              </div>
             </div>
             <button
               v-for="c in regularChains" :key="c.id"
@@ -376,9 +379,21 @@ function selectToken(t: TokenRow) {
 
           <!-- Token list -->
           <div class="flex-1 overflow-y-auto">
-            <div v-if="loadingTokensList && !hasWalletTokens" class="flex items-center justify-center py-12 gap-2 text-sm text-muted-foreground">
-              <Icon name="lucide:loader-2" class="w-4 h-4 animate-spin" />
-              Loading tokens…
+            <div v-if="loadingTokensList && !hasWalletTokens" class="px-3 py-2 space-y-2">
+              <div
+                v-for="i in 6" :key="i"
+                class="flex items-center gap-3 py-2"
+              >
+                <Skeleton class="w-8 h-8 rounded-full shrink-0" />
+                <div class="flex-1 space-y-1.5">
+                  <Skeleton class="h-3.5 w-24" />
+                  <Skeleton class="h-2.5 w-32" />
+                </div>
+                <div class="text-right space-y-1">
+                  <Skeleton class="h-3.5 w-16" />
+                  <Skeleton class="h-2.5 w-10 ml-auto" />
+                </div>
+              </div>
             </div>
             <div v-else-if="!filteredTokens.length" class="py-10 text-center text-sm text-muted-foreground">
               No tokens found

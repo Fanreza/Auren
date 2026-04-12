@@ -419,6 +419,13 @@ async function handleCreateAndDeposit(payload: {
   target_amount?: number
   timeline?: string
   strategy_key: StrategyKey
+  vault: {
+    vault_address: string
+    vault_chain_id: number
+    vault_protocol: string
+    vault_symbol: string
+    vault_asset: string
+  }
   fromChainId: number
   fromToken: `0x${string}`
   fromTokenSymbol: string
@@ -549,9 +556,44 @@ watch([isConnected, isReady], ([connected, ready]) => {
       </div>
     </header>
 
-    <!-- Loading -->
-    <div v-if="!pocket" class="flex items-center justify-center py-20">
-      <Icon name="lucide:loader-2" class="w-6 h-6 animate-spin text-muted-foreground" />
+    <!-- Loading skeleton -->
+    <div v-if="!pocket" class="max-w-4xl mx-auto px-4 sm:px-6 py-6">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card class="lg:row-span-2">
+          <CardContent class="p-6 space-y-4">
+            <div class="flex items-center gap-2">
+              <Skeleton class="w-10 h-10 rounded-xl" />
+              <div class="flex-1 space-y-1.5">
+                <Skeleton class="h-4 w-28" />
+                <Skeleton class="h-3 w-16" />
+              </div>
+            </div>
+            <Skeleton class="h-12 w-40" />
+            <Skeleton class="h-4 w-24" />
+            <div class="flex gap-3">
+              <Skeleton class="flex-1 h-11 rounded-xl" />
+              <Skeleton class="flex-1 h-11 rounded-xl" />
+            </div>
+            <Skeleton class="h-9 w-full rounded-xl" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="p-5 space-y-3">
+            <Skeleton class="h-4 w-28" />
+            <Skeleton class="h-14 w-full rounded-xl" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent class="p-5 space-y-3">
+            <Skeleton class="h-4 w-20" />
+            <div class="space-y-2">
+              <Skeleton class="h-4 w-full" />
+              <Skeleton class="h-4 w-5/6" />
+              <Skeleton class="h-4 w-3/4" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
 
     <main v-else class="max-w-4xl mx-auto px-4 sm:px-6 py-6">
@@ -627,6 +669,12 @@ watch([isConnected, isReady], ([connected, ready]) => {
                 v-for="alloc in allocations" :key="alloc.address"
                 class="flex items-center gap-3 rounded-lg bg-muted/30 px-3 py-2.5"
               >
+                <AppVaultLogos
+                  :asset-address="strategy?.assetAddress"
+                  :asset-symbol="alloc.assetSymbol"
+                  :protocol="alloc.protocol"
+                  size="sm"
+                />
                 <div class="flex-1 min-w-0">
                   <p class="text-sm font-semibold truncate">{{ alloc.vaultSymbol }}</p>
                   <p class="text-[11px] text-muted-foreground">{{ alloc.protocol }} · {{ Math.round(alloc.weight * 100) }}%</p>

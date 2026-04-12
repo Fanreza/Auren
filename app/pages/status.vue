@@ -176,8 +176,14 @@ onMounted(() => { checkAll() })
             <p v-if="s.detail" class="text-[10px] text-muted-foreground/60 mt-0.5">{{ s.detail }}</p>
           </div>
           <div class="text-right shrink-0">
-            <p class="text-xs font-semibold" :class="statusStyle(s.status).color">{{ statusStyle(s.status).label }}</p>
-            <p v-if="s.latencyMs !== undefined" class="text-[10px] text-muted-foreground/60 tabular-nums">{{ s.latencyMs }}ms</p>
+            <template v-if="s.status === 'checking'">
+              <Skeleton class="h-3 w-14 mb-1 ml-auto" />
+              <Skeleton class="h-2.5 w-10 ml-auto" />
+            </template>
+            <template v-else>
+              <p class="text-xs font-semibold" :class="statusStyle(s.status).color">{{ statusStyle(s.status).label }}</p>
+              <p v-if="s.latencyMs !== undefined" class="text-[10px] text-muted-foreground/60 tabular-nums">{{ s.latencyMs }}ms</p>
+            </template>
           </div>
         </div>
       </div>

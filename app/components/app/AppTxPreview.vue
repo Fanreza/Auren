@@ -203,10 +203,14 @@ function fmtAmount(n: string, max = 6): string {
       <p v-if="subtitle" class="text-[11px] text-muted-foreground">{{ subtitle }}</p>
     </div>
 
-    <!-- Loading state -->
-    <div v-if="loading" class="p-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-      <Icon name="lucide:loader-2" class="w-4 h-4 animate-spin" />
-      Finding best route...
+    <!-- Loading skeleton -->
+    <div v-if="loading" class="p-3 space-y-2">
+      <Skeleton class="h-16 rounded-xl" />
+      <div class="flex justify-center">
+        <Skeleton class="w-7 h-7 rounded-lg" />
+      </div>
+      <Skeleton class="h-16 rounded-xl" />
+      <Skeleton class="h-20 rounded-xl mt-2" />
     </div>
 
     <!-- Empty state -->

@@ -6,6 +6,7 @@ import { CalendarRoot, useForwardPropsEmits } from "reka-ui"
 import { CalendarDate, getLocalTimeZone, today } from "@internationalized/date"
 import { cn } from "@/lib/utils"
 import { CalendarCell, CalendarCellTrigger, CalendarGrid, CalendarGridBody, CalendarGridHead, CalendarGridRow, CalendarHeadCell, CalendarHeader, CalendarNextButton, CalendarPrevButton } from "."
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../select"
 
 const props = defineProps<CalendarRootProps & { class?: HTMLAttributes["class"] }>()
 
@@ -29,13 +30,13 @@ const YEARS = computed(() => {
   return Array.from({ length: 21 }, (_, i) => now - 10 + i)
 })
 
-function onMonthChange(e: Event) {
-  const monthIdx = parseInt((e.target as HTMLSelectElement).value)
+function onMonthChange(v: string) {
+  const monthIdx = parseInt(v)
   placeholder.value = new CalendarDate(placeholder.value.year, monthIdx + 1, 1)
 }
 
-function onYearChange(e: Event) {
-  const year = parseInt((e.target as HTMLSelectElement).value)
+function onYearChange(v: string) {
+  const year = parseInt(v)
   placeholder.value = new CalendarDate(year, placeholder.value.month, 1)
 }
 </script>
@@ -49,26 +50,24 @@ function onYearChange(e: Event) {
   >
     <CalendarHeader>
       <CalendarPrevButton />
-      <!-- Custom month + year dropdowns -->
+      <!-- Custom month + year dropdowns (shadcn Select) -->
       <div class="flex items-center gap-1.5 flex-1 justify-center">
-        <select
-          :value="placeholder.month - 1"
-          class="bg-transparent text-sm font-medium rounded-md px-2 py-1 hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer"
-          @change="onMonthChange"
-        >
-          <option v-for="(m, i) in MONTHS" :key="m" :value="i" class="bg-popover">
-            {{ m }}
-          </option>
-        </select>
-        <select
-          :value="placeholder.year"
-          class="bg-transparent text-sm font-medium rounded-md px-2 py-1 hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring cursor-pointer tabular-nums"
-          @change="onYearChange"
-        >
-          <option v-for="y in YEARS" :key="y" :value="y" class="bg-popover">
-            {{ y }}
-          </option>
-        </select>
+        <Select :model-value="String(placeholder.month - 1)" @update:model-value="(v) => onMonthChange(v as string)">
+          <SelectTrigger class="h-8 w-28 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="(m, i) in MONTHS" :key="m" :value="String(i)">{{ m }}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select :model-value="String(placeholder.year)" @update:model-value="(v) => onYearChange(v as string)">
+          <SelectTrigger class="h-8 w-20 text-xs tabular-nums">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="y in YEARS" :key="y" :value="String(y)">{{ y }}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <CalendarNextButton />
     </CalendarHeader>

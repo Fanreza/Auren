@@ -31,6 +31,8 @@ interface VaultOption {
   protocol: string
   apy: number          // decimal
   tvl: number          // USD
+  assetAddress: string
+  assetSymbol: string
   isCurrent: boolean
   isRecommended: boolean
 }
@@ -78,6 +80,8 @@ async function fetchCandidates() {
         protocol: proto,
         apy,
         tvl: parseFloat(v.analytics?.tvl?.usd ?? '0') || 0,
+        assetAddress: strategy.assetAddress,
+        assetSymbol: strategy.assetSymbol,
         isCurrent: v.address.toLowerCase() === props.currentVaultAddress?.toLowerCase(),
         isRecommended: false,
       }
@@ -285,9 +289,28 @@ function fmtTvl(n: number): string {
 
       <!-- Form -->
       <div v-else class="px-5 py-5 space-y-3">
-        <!-- Loading -->
-        <div v-if="loadingCandidates" class="flex items-center justify-center py-12">
-          <Icon name="lucide:loader-2" class="w-5 h-5 animate-spin text-muted-foreground" />
+        <!-- Loading skeleton -->
+        <div v-if="loadingCandidates" class="space-y-2">
+          <div
+            v-for="i in 3" :key="i"
+            class="rounded-xl border-2 border-border p-4 space-y-2"
+          >
+            <div class="flex items-start gap-3">
+              <div class="flex-1 space-y-1.5">
+                <Skeleton class="h-4 w-32" />
+                <Skeleton class="h-3 w-20" />
+              </div>
+              <Skeleton class="h-5 w-24 rounded-full" />
+            </div>
+            <div class="flex items-baseline justify-between pt-1">
+              <Skeleton class="h-3 w-8" />
+              <Skeleton class="h-5 w-16" />
+            </div>
+            <div class="flex items-center justify-between pt-2 border-t border-border/30">
+              <Skeleton class="h-3 w-16" />
+              <Skeleton class="h-3 w-20" />
+            </div>
+          </div>
         </div>
 
         <!-- Empty -->
@@ -306,11 +329,19 @@ function fmtTvl(n: number): string {
             :disabled="v.isCurrent || switching"
             @click="!v.isCurrent && (selectedVault = v)"
           >
-            <!-- Top row: name/protocol (left) + badge (right) -->
+            <!-- Top row: logos + name/protocol (left) + badge (right) -->
             <div class="flex items-start justify-between gap-2 mb-2">
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-bold truncate">{{ v.name }}</p>
-                <p class="text-[11px] text-muted-foreground/70 truncate">{{ v.protocol }}</p>
+              <div class="flex items-start gap-3 flex-1 min-w-0">
+                <AppVaultLogos
+                  :asset-address="v.assetAddress"
+                  :asset-symbol="v.assetSymbol"
+                  :protocol="v.protocol"
+                  size="sm"
+                />
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-bold truncate">{{ v.name }}</p>
+                  <p class="text-[11px] text-muted-foreground/70 truncate">{{ v.protocol }}</p>
+                </div>
               </div>
               <span
                 v-if="v.isCurrent"

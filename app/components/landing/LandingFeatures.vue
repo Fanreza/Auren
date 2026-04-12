@@ -7,55 +7,58 @@ const { stop } = useIntersectionObserver(sectionRef, ([entry]) => {
   if (entry?.isIntersecting) { visible.value = true; stop() }
 }, { threshold: 0.1 })
 
-// Mock pocket cards to visualise the concept
-const pockets = [
+const products = [
   {
-    emoji: '🏖️',
-    name: 'Vacation Fund',
-    target: 3000,
-    current: 1247,
-    strategy: 'Conservative',
-    strategyColor: 'text-brand-sage',
-    strategyBg: 'bg-brand-sage/10 border-brand-sage/20',
-    apy: '4.8%',
-    months: '3 months in',
+    icon: 'lucide:piggy-bank',
+    name: 'Pockets',
+    tagline: 'Goal-based savings',
+    description: 'Create a pocket with a name, target, and timeline. Each pocket maps to one vault. Track progress like a savings app — yield compounds in the background.',
+    bullets: ['Quick-pick presets', '1 vault per pocket', 'Goal projection chart'],
+    accent: 'sage',
   },
   {
-    emoji: '🏠',
-    name: 'House Deposit',
-    target: 20000,
-    current: 8540,
-    strategy: 'Balanced',
-    strategyColor: 'text-brand-teal',
-    strategyBg: 'bg-brand-teal/10 border-brand-teal/20',
-    apy: '6.2%',
-    months: '11 months in',
+    icon: 'lucide:trending-up',
+    name: 'Earn',
+    tagline: 'Browse every vault',
+    description: 'Jumper-style catalog of every Composer-routable vault on Base. Filter by asset, protocol, category, or TVL. APY base/reward split, trends, and freshness shown per card.',
+    bullets: ['Live APY + TVL', 'Filter by asset & protocol', 'Your positions, in one place'],
+    accent: 'teal',
   },
   {
-    emoji: '🛡️',
-    name: 'Emergency Fund',
-    target: 5000,
-    current: 5000,
-    strategy: 'Conservative',
-    strategyColor: 'text-brand-sage',
-    strategyBg: 'bg-brand-sage/10 border-brand-sage/20',
-    apy: '4.8%',
-    months: 'Goal reached',
+    icon: 'lucide:layers',
+    name: 'Strategies',
+    tagline: 'Multi-vault marketplace',
+    description: 'Build a strategy from any combination of vaults with weight sliders. Publish it, fork someone else\'s, or keep it private. Forks create separate copies — edits never break followers.',
+    bullets: ['Any-asset builder', 'Public marketplace', 'Fork & customize'],
+    accent: 'gold',
   },
 ]
 
-function progress(current: number, target: number) {
-  return Math.min(100, Math.round((current / target) * 100))
-}
-
-function fmt(n: number) {
-  return '$' + n.toLocaleString('en-US')
+const accents: Record<string, { iconBg: string; iconText: string; bullet: string; bar: string }> = {
+  sage: {
+    iconBg: 'bg-brand-sage/10',
+    iconText: 'text-brand-sage',
+    bullet: 'text-brand-sage/70',
+    bar: 'bg-brand-sage',
+  },
+  teal: {
+    iconBg: 'bg-brand-teal/10',
+    iconText: 'text-brand-teal',
+    bullet: 'text-brand-teal/70',
+    bar: 'bg-brand-teal',
+  },
+  gold: {
+    iconBg: 'bg-brand-gold/10',
+    iconText: 'text-brand-gold',
+    bullet: 'text-brand-gold/70',
+    bar: 'bg-brand-gold',
+  },
 }
 </script>
 
 <template>
   <section
-    id="what-is-a-pocket"
+    id="three-products"
     ref="sectionRef"
     class="py-24 sm:py-32"
   >
@@ -67,75 +70,66 @@ function fmt(n: number) {
         :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
       >
         <p class="text-xs font-semibold text-primary uppercase tracking-[0.2em] mb-3">
-          Core concept
+          What's inside
         </p>
         <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-[-0.03em] mb-5">
-          One goal.<br />One pocket.
+          Three tabs.<br />One smart account.
         </h2>
         <p class="text-muted-foreground text-base sm:text-lg leading-relaxed">
-          A pocket is a savings container for a specific goal. Give it a name, set a target,
-          pick a growth strategy, and deposit. That's it. Each pocket tracks its own progress,
-          earns its own yield, and can be withdrawn independently — any time.
+          Auren wraps three different ways to earn into one app. Pick a goal-shaped pocket,
+          browse the raw catalog, or design your own strategy — your funds and gas live in
+          the same Pimlico smart account.
         </p>
       </div>
 
-      <!-- Pocket cards -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 lg:gap-5">
+      <!-- Product cards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-5">
         <div
-          v-for="(pocket, i) in pockets"
-          :key="pocket.name"
-          class="rounded-2xl bg-card border border-border p-5 sm:p-6 transition-all duration-700 ease-out"
+          v-for="(p, i) in products"
+          :key="p.name"
+          class="rounded-2xl overflow-hidden bg-card border border-border transition-all duration-700 ease-out"
           :class="visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'"
           :style="{ transitionDelay: visible ? `${160 + i * 110}ms` : '0ms' }"
         >
-          <!-- Header row -->
-          <div class="flex items-start justify-between mb-5">
-            <div class="flex items-center gap-2.5">
-              <div class="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center text-xl">
-                {{ pocket.emoji }}
-              </div>
-              <div>
-                <p class="font-semibold text-sm text-foreground leading-tight">{{ pocket.name }}</p>
-                <p class="text-xs text-muted-foreground mt-0.5">{{ pocket.months }}</p>
-              </div>
-            </div>
-            <span class="text-xs font-semibold text-primary">{{ pocket.apy }} APY</span>
-          </div>
+          <div class="h-0.5 w-full" :class="accents[p.accent]?.bar" />
 
-          <!-- Progress bar -->
-          <div class="mb-3">
-            <div class="flex justify-between text-xs text-muted-foreground mb-1.5">
-              <span>{{ fmt(pocket.current) }}</span>
-              <span>{{ fmt(pocket.target) }}</span>
+          <div class="p-6 sm:p-7">
+            <div
+              class="w-12 h-12 rounded-xl flex items-center justify-center mb-5"
+              :class="accents[p.accent]?.iconBg"
+            >
+              <Icon :name="p.icon" class="w-6 h-6" :class="accents[p.accent]?.iconText" />
             </div>
-            <div class="h-1.5 bg-secondary rounded-full overflow-hidden">
-              <div
-                class="h-full bg-primary rounded-full transition-all duration-1000 ease-out"
-                :style="{ width: visible ? `${progress(pocket.current, pocket.target)}%` : '0%' }"
-              />
-            </div>
-            <p class="text-xs text-muted-foreground mt-1.5 text-right">
-              {{ progress(pocket.current, pocket.target) }}% of goal
+
+            <p class="text-xs font-semibold uppercase tracking-widest mb-1" :class="accents[p.accent]?.iconText">
+              {{ p.tagline }}
             </p>
-          </div>
+            <h3 class="text-xl font-bold text-foreground mb-3">{{ p.name }}</h3>
+            <p class="text-sm text-muted-foreground leading-relaxed mb-5">
+              {{ p.description }}
+            </p>
 
-          <!-- Strategy badge -->
-          <span
-            class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border"
-            :class="[pocket.strategyBg, pocket.strategyColor]"
-          >
-            {{ pocket.strategy }}
-          </span>
+            <ul class="space-y-2">
+              <li
+                v-for="b in p.bullets"
+                :key="b"
+                class="flex items-center gap-2.5 text-sm text-muted-foreground"
+              >
+                <Icon name="lucide:check" class="w-3.5 h-3.5 shrink-0" :class="accents[p.accent]?.bullet" />
+                {{ b }}
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
       <!-- Caption -->
       <p
-        class="mt-8 text-center text-sm text-muted-foreground/60 transition-all duration-700 ease-out"
+        class="mt-10 text-center text-sm text-muted-foreground/60 transition-all duration-700 ease-out"
         :class="visible ? 'opacity-100' : 'opacity-0'"
         style="transition-delay: 500ms"
       >
-        Example pockets — your real data lives here when you sign in
+        Every vault that surfaces has been probed for Composer routing — single-tx deposits, no manual bridging.
       </p>
 
     </div>

@@ -14,36 +14,40 @@ function toggle(i: number) {
 
 const faqs = [
   {
-    q: 'What exactly is a pocket?',
-    a: 'A pocket is a savings container tied to a specific goal — like "Vacation Fund" or "Emergency Fund". Each one has a name, a target amount, a timeline, and its own growth strategy. You can have as many pockets as you want, and they all run independently.',
+    q: 'What\'s the difference between Pockets, Earn, and Strategies?',
+    a: 'Pockets are goal-shaped wrappers — one pocket holds one vault, with a name, target, and timeline. Earn is the raw catalog of every Composer-routable vault on Base, no wrapper. Strategies are multi-vault recipes you can build, fork, or browse from a public marketplace. Same smart account underneath all three.',
   },
   {
     q: 'Do I need a crypto wallet to sign up?',
-    a: 'No. You sign in with your email (or Google). Auren creates an embedded smart wallet for you automatically using Privy. You never see a seed phrase or need to install anything.',
+    a: 'No. You sign in with email (or Google). Privy creates a non-custodial embedded wallet for you, and Pimlico wraps it in an ERC-4337 smart account. No seed phrases, no MetaMask, no setup.',
   },
   {
-    q: 'What does "fee-free first deposit" mean?',
-    a: 'Crosschain transactions require a small gas fee. For your first deposit, Auren covers that fee on your behalf through a paymaster. You just deposit your savings — we handle the gas.',
+    q: 'How is gas paid? Do I need ETH?',
+    a: 'No. Pimlico\'s ERC-20 paymaster sponsors gas and deducts the cost in USDC from your smart account. You only need to hold the assets you want to save with — never native ETH.',
   },
   {
     q: 'Which chains and tokens can I deposit from?',
-    a: 'You can deposit from Ethereum, Arbitrum, Optimism, Polygon, BNB Chain, Avalanche, and more. Any ERC-20 token is accepted — Auren uses Enso Finance to auto-route a swap from whatever you deposit into the strategy\'s underlying asset. You don\'t need to manually bridge or swap anything.',
+    a: 'Vaults live on Base, but you can fund from Ethereum, Arbitrum, Optimism, Polygon, BNB Chain, Avalanche and more — in any ERC-20 you already hold. LI.FI Composer routes the bridge, swap, and vault deposit into a single transaction.',
+  },
+  {
+    q: 'How does the Strategies marketplace work?',
+    a: 'Strategies are multi-vault recipes with weight sliders. You can build private ones, publish public, or share unlisted. Other users can copy ("fork") your strategy into their own library — forks are independent entities, so editing your original never breaks anyone\'s copy. Forking auto-follows the source, so creators see real follower counts.',
+  },
+  {
+    q: 'Can I build a strategy with any token?',
+    a: 'Yes — as long as it has a Composer-routable vault on Base. The strategy builder surfaces every asset that passes our filter pipeline (TVL ≥ $10M, transactional, redeemable, Composer-probed). USDC, cbBTC, WETH, EURC, LBTC, weETH, wstETH, cbETH and more are typically available.',
   },
   {
     q: 'Can I lose money?',
-    a: 'Yes. The Conservative strategy (USDC) is the most stable — yield can fluctuate but your principal rarely drops. Balanced (Bitcoin) and Aggressive (Ethereum) follow crypto prices, so they can drop significantly in a downturn. Only save what you\'re comfortable with at each risk level.',
+    a: 'Yes. Stablecoin vaults (USDC, EURC) are the most stable — yield fluctuates but principal rarely drops. cbBTC, WETH, and LST vaults follow crypto prices and can drop significantly in a downturn. DeFi also carries smart-contract risk. Only save what you\'re comfortable with at each level.',
   },
   {
     q: 'Can I withdraw whenever I want?',
-    a: 'Always. There are no lock-up periods, no exit fees, and no waiting periods. Withdraw part of it, all of it, or close the pocket entirely — whenever you want. The yield you\'ve earned stays yours.',
-  },
-  {
-    q: 'Can I switch strategies after I create a pocket?',
-    a: 'Yes. You can switch a pocket from Conservative to Balanced or Aggressive (and vice versa) at any time from the pocket detail page. The switch rebalances in a single transaction.',
+    a: 'Always. No lock-ups, no exit fees, no waiting periods. Withdraw part, all, or close the pocket entirely. Yield earned stays yours.',
   },
   {
     q: 'Is Auren safe?',
-    a: 'Your funds sit in audited, non-custodial smart contracts. Auren never has custody of your money — only your wallet can move it. Every transaction is verifiable on-chain with any block explorer. That said, DeFi always carries smart contract risk. Only save amounts you\'re comfortable with.',
+    a: 'Funds sit in audited, non-custodial ERC-4626 vaults from Morpho, Aave, Yearn, Euler, Compound and others. Auren never has custody — only your smart account can move funds. Every action is verifiable on Basescan. That said, DeFi always carries smart-contract risk; only deposit amounts you\'re comfortable with.',
   },
 ]
 </script>

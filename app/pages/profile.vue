@@ -13,7 +13,9 @@ const currencyComposable = useCurrency();
 const notifs = useNotifications();
 const { downloadTaxCsv } = useTaxExport();
 const { allTransactions, fetchAllTransactions } = useDashboardStats();
-const { pockets } = storeToRefs(profileStore);
+const { isConnected, address, loginMethod, logout, eoaWalletAddress } = usePrivyAuth();
+const profileStore = useProfileStore();
+const { customName, pockets } = storeToRefs(profileStore);
 
 // Pull tx history once pockets are loaded so tax export has data
 watch(pockets, (list) => {
@@ -47,10 +49,6 @@ async function handleEnableNotifications() {
 		await notifs.requestPermission();
 	}
 }
-
-const { isConnected, address, loginMethod, logout, eoaWalletAddress } = usePrivyAuth();
-const profileStore = useProfileStore();
-const { customName } = storeToRefs(profileStore);
 
 const editingName = ref(false);
 const nameInput = ref("");

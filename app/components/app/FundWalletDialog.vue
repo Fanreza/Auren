@@ -17,7 +17,7 @@ const props = defineProps<{
   defaultTab?: 'transfer' | 'buy' | 'withdraw' | 'swap'
 }>()
 
-const { eoaWalletAddress, getPublicClient, getWalletClient } = usePrivyAuth()
+const { eoaWalletAddress, getPublicClient, getWalletClient, getEoaProvider } = usePrivyAuth()
 
 const copied = ref(false)
 const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const
@@ -145,7 +145,7 @@ async function executeTransfer() {
   transferDone.value = false
 
   try {
-    const provider = typeof window !== 'undefined' ? (window as any).ethereum : null
+    const provider = await getEoaProvider().catch(() => null)
     if (!provider) { transferError.value = 'No wallet provider'; return }
 
     const token = fromToken.value

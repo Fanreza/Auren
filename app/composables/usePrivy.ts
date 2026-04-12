@@ -184,6 +184,7 @@ export function usePrivyAuth() {
           entropyId: entropy.entropyId,
           entropyIdVerifier: entropy.entropyIdVerifier,
         })
+        _embeddedProvider = provider
 
         eoaAddress = embeddedWallet.address as `0x${string}`
         signerClient = createWalletClient({
@@ -218,6 +219,27 @@ export function usePrivyAuth() {
       _smartAccountClient = null
       smartAccountAddress.value = undefined
     }
+  }
+
+  // Returns the EIP-1193 provider for the active EOA signer (embedded or external).
+  // Used for raw EOA txns (e.g. "Transfer In" from EOA to smart account) that should
+  // NOT go through the smart-account paymaster path. For embedded wallets, returns
+  // the wrapped provider to work around Privy's `gas` vs `gasLimit` bug.
+  async function getEoaProvider(): Promise<EIP1193Provider | any> {
+    if (_externalProvider) return _externalProvider
+    if (_embeddedProvider) return wrapProvider(_embeddedProvider)
+    if (!privyUser.value) throw new Error('Not authenticated')
+    const embeddedWallet = getUserEmbeddedEthereumWallet(privyUser.value)
+    if (!embeddedWallet) throw new Error('No embedded wallet')
+    const entropy = getEntropyDetailsFromUser(privyUser.value)
+    if (!entropy) throw new Error('Cannot derive entropy for embedded wallet')
+    const provider = await privy.embeddedWallet.getEthereumProvider({
+      wallet: embeddedWallet,
+      entropyId: entropy.entropyId,
+      entropyIdVerifier: entropy.entropyIdVerifier,
+    })
+    _embeddedProvider = provider
+    return wrapProvider(provider)
   }
 
   // ---- Wallet client (write operations) ----
@@ -711,6 +733,7 @@ export function usePrivyAuth() {
     // Clients
     getPublicClient,
     getWalletClient,
+    getEoaProvider,
 
     // Auth
     sendEmailCode,

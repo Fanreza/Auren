@@ -31,6 +31,7 @@
     "jspdf-autotable": "^5.0.7",
     "lucide-vue-next": "^0.577.0",
     "nuxt": "^4.3.1",
+    "ox": "^0.8.9",
     "permissionless": "^0.2.57",
     "pinia": "^3.0.4",
     "reka-ui": "^2.9.2",
@@ -51,5 +52,11 @@
     "tailwindcss": "^4.2.1",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "ox": "^0.8.9"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

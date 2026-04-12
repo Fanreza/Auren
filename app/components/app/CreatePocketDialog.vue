@@ -386,7 +386,12 @@ const ctaLabel = computed(() => {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-md p-0 gap-0 max-h-[90dvh] overflow-y-auto">
+    <DialogContent class="sm:max-w-md p-0 gap-0 max-h-dvh sm:max-h-[90dvh] overflow-y-auto h-dvh sm:h-auto sm:rounded-2xl rounded-none top-auto bottom-0 sm:top-1/2 sm:bottom-auto translate-y-0 sm:-translate-y-1/2">
+
+      <!-- Mobile drag handle (visual cue for bottom sheet) -->
+      <div class="sm:hidden flex justify-center pt-2 pb-1">
+        <div class="w-10 h-1 rounded-full bg-muted-foreground/30" />
+      </div>
 
       <!-- ── Header ── -->
       <div class="px-5 pt-5 pb-4 border-b border-border/40">
@@ -667,17 +672,6 @@ const ctaLabel = computed(() => {
               </div>
             </div>
 
-            <!-- Route info -->
-            <div v-if="primaryQuote" class="flex items-center gap-3 mt-3 pt-2 border-t border-border/20 text-[11px] text-muted-foreground/60">
-              <span v-if="totalFeesUsd">Fees {{ totalFeesUsd }}</span>
-              <span v-if="estTime">{{ estTime }}</span>
-              <span v-if="isXChain" class="text-amber-400 ml-auto flex items-center gap-1">
-                <Icon name="lucide:zap" class="w-3 h-3" /> Cross-chain
-              </span>
-            </div>
-            <p v-else-if="quotesLoading" class="text-[11px] text-muted-foreground/50 mt-2 flex items-center gap-1">
-              <Icon name="lucide:loader-2" class="w-3 h-3 animate-spin" /> Finding best route…
-            </p>
           </template>
 
           <button
@@ -688,6 +682,15 @@ const ctaLabel = computed(() => {
             <Icon name="lucide:arrow-left" class="w-4 h-4" /> Go back to pick a strategy
           </button>
         </div>
+
+        <!-- Detailed transaction preview (route + fees + time) -->
+        <AppTxPreview
+          v-if="strategyKey && fromToken && amount && (quotesLoading || primaryQuote)"
+          :quote="primaryQuote"
+          :loading="quotesLoading"
+          title="Deposit Preview"
+          :subtitle="`${fromToken?.symbol ?? ''} → ${STRATEGIES[strategyKey].assetSymbol} vault`"
+        />
 
         <!-- CTA -->
         <Button

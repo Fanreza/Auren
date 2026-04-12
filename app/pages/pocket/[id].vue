@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatUnits } from 'viem'
+import { formatUnits, parseUnits } from 'viem'
 import { toPng } from 'html-to-image'
 import { BRAND } from '~/config/brand'
 import { STRATEGIES, type StrategyKey } from '~/config/strategies'
@@ -7,14 +7,38 @@ import { usePrivyAuth } from '~/composables/usePrivy'
 import { storeToRefs } from 'pinia'
 import { useProfileStore } from '~/stores/useProfileStore'
 import type { LifiAllocData } from '~/stores/useProfileStore'
+import { useVault } from '~/composables/useVault'
+import { useCoinGecko } from '~/composables/useCoinGecko'
+import { useWalletTokens } from '~/composables/useWalletTokens'
+import { useTransactionRecorder } from '~/composables/useTransactionRecorder'
+import { computeNextDue } from '~/composables/useDepositReminders'
+import { computePocketHealth } from '~/composables/useVaultHealth'
+import { toast } from 'vue-sonner'
+import type { DbPocket } from '~/types/database'
 
 const route = useRoute()
 const pocketId = route.params.id as string
 
-const { isConnected, isReady } = usePrivyAuth()
+const { isConnected, isReady, address } = usePrivyAuth()
 const profileStore = useProfileStore()
 const { pockets, pocketPositions, loadingPositions } = storeToRefs(profileStore)
 const { getTransactions } = useUserData()
+
+// ---- Vault + wallet tokens (for deposit dialog) ----
+const { txState, txHash, txError, lifiDeposit, reset } = useVault()
+const { getTokenPrices } = useCoinGecko()
+const { walletTokens, loadingTokens, fetchWalletTokens } = useWalletTokens(
+  address, null, getTokenPrices,
+)
+
+// Refetch pocket position + wallet tokens on demand
+async function refetchAll() {
+  await fetchWalletTokens()
+  if (address.value) await profileStore.fetchAllPositions(address.value)
+  await profileStore.refreshPockets()
+}
+
+watch(address, (a) => { if (a) fetchWalletTokens() }, { immediate: true })
 
 // ---- Pocket ----
 const pocket = computed(() => pockets.value.find(p => p.id === pocketId) ?? null)
@@ -100,6 +124,7 @@ async function fetchHistory() {
 }
 
 // ---- Earnings ----
+// Tx amounts are stored as USD decimal (see useDashboardStats convention)
 const principal = computed(() => {
   let total = 0
   for (const tx of history.value) {
@@ -111,19 +136,63 @@ const principal = computed(() => {
   return Math.max(total, 0)
 })
 
-const yieldEarned = computed(() =>
-  assetValue.value > 0 && principal.value > 0
-    ? Math.max(assetValue.value - principal.value, 0)
-    : 0,
-)
+// Yield in USD = current pocket value − net contributed
+const yieldEarnedUsd = computed(() => {
+  if (usdValue.value <= 0 || principal.value <= 0) return 0
+  return usdValue.value - principal.value
+})
+
+// Backwards-compat alias for hero card / share card
+const yieldEarned = yieldEarnedUsd
 
 const profitFormatted = computed(() => {
-  const profit = yieldEarned.value * assetPrice.value
-  if (profit === 0) return null
+  const profit = yieldEarnedUsd.value
+  if (Math.abs(profit) < 0.01) return null
   const abs = Math.abs(profit).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   return (profit >= 0 ? '+$' : '-$') + abs
 })
-const profitPositive = computed(() => yieldEarned.value >= 0)
+const profitPositive = computed(() => yieldEarnedUsd.value >= 0)
+
+// ---- Chart series (transactions normalized for chart components) ----
+const chartTransactions = computed(() => {
+  return history.value.map(tx => ({
+    timestamp: tx.timestamp < 10_000_000_000 ? tx.timestamp * 1000 : tx.timestamp,
+    type: tx.type,
+    usdValue: parseFloat(tx.amount) || 0,
+  }))
+})
+
+// Live APY decimal (e.g. 0.047)
+const apyDecimal = computed(() => {
+  if (!pocket.value) return 0
+  const v = profileStore.getStrategyApy(pocket.value.strategy_key)
+  if (!v) return 0
+  const n = parseFloat(v)
+  return isNaN(n) ? 0 : n / 100
+})
+
+const apyDetailsForPocket = computed(() => {
+  if (!pocket.value) return null
+  return profileStore.getStrategyApyDetails(pocket.value.strategy_key)
+})
+
+// All strategies APY for what-if comparison
+const allStrategyApys = computed<Record<string, number>>(() => {
+  const out: Record<string, number> = {}
+  for (const k of Object.keys(STRATEGIES)) {
+    const v = profileStore.getStrategyApy(k)
+    out[k] = v ? (parseFloat(v) || 0) / 100 : 0
+  }
+  return out
+})
+
+const pocketHealth = computed(() => computePocketHealth(allocations.value))
+
+const daysActiveForWhatIf = computed(() => {
+  if (!pocket.value?.created_at) return 0
+  const created = new Date(pocket.value.created_at).getTime()
+  return Math.max(1, Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24)))
+})
 
 // ---- Goal progress ----
 const progressRaw = computed(() => {
@@ -240,10 +309,32 @@ async function downloadShareCard() {
   }
 }
 
+function shareText(): string {
+  const yieldStr = yieldEarnedUsd.value > 0 ? ` (${profitFormatted.value} earned)` : ''
+  return `I'm saving ${displayUsd(usdValue)} for "${pocket.value?.name}"${yieldStr} with @aurenapp — goal-based DeFi savings on @base.`
+}
+
 async function nativeShare() {
-  const text = `Check out my savings pocket "${pocket.value?.name}" on ${BRAND.name}.`
+  const text = shareText()
   if (navigator.share) await navigator.share({ text, url: BRAND.siteUrl })
   else await navigator.clipboard.writeText(`${text}\n${BRAND.siteUrl}`)
+}
+
+function shareToTwitter() {
+  const text = encodeURIComponent(shareText())
+  const url = encodeURIComponent(BRAND.siteUrl)
+  window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'width=550,height=420')
+}
+
+function shareToFarcaster() {
+  const text = encodeURIComponent(shareText())
+  const url = encodeURIComponent(BRAND.siteUrl)
+  window.open(`https://warpcast.com/~/compose?text=${text}&embeds[]=${url}`, '_blank', 'width=550,height=420')
+}
+
+async function copyShareLink() {
+  await navigator.clipboard.writeText(`${shareText()}\n${BRAND.siteUrl}`)
+  toast.success('Copied to clipboard')
 }
 
 // ---- Yield ticker (animated counter) ----
@@ -290,6 +381,146 @@ onUnmounted(() => { if (tickInterval) clearInterval(tickInterval) })
 // ---- Edit ----
 const showEditDialog = ref(false)
 function handleSaved() { profileStore.refreshPockets() }
+
+// ---- Deposit dialog (uses CreatePocketDialog in deposit-only mode) ----
+const showDepositDialog = ref(false)
+const creatingPocket = ref(false)
+const selectedPocketForTx = ref<DbPocket | null>(null)
+const lastTxType = ref<'deposit' | 'withdraw' | 'redeem'>('deposit')
+const lastTxAmount = ref('')
+const showLegacyDepositDialog = ref(false)
+
+const selectedStrategyForTx = computed(() =>
+  selectedPocketForTx.value ? STRATEGIES[selectedPocketForTx.value.strategy_key as StrategyKey] : null,
+)
+
+useTransactionRecorder({
+  txState, txHash, reset,
+  selectedPocket: selectedPocketForTx,
+  selectedStrategy: selectedStrategyForTx,
+  lastTxType, lastTxAmount,
+  showDepositDialog: showLegacyDepositDialog,
+  address,
+  fetchBalances: refetchAll,
+  fetchWalletTokens: refetchAll,
+  fetchAllPositions: async () => { await refetchAll() },
+  refreshPockets: async () => { await refetchAll() },
+})
+
+function openDepositDialog() {
+  if (!pocket.value) return
+  selectedPocketForTx.value = pocket.value
+  showDepositDialog.value = true
+}
+
+async function handleCreateAndDeposit(payload: {
+  name: string
+  purpose?: string
+  target_amount?: number
+  timeline?: string
+  strategy_key: StrategyKey
+  fromChainId: number
+  fromToken: `0x${string}`
+  fromTokenSymbol: string
+  fromTokenDecimals: number
+  totalAmount: string
+  allocations: Array<{
+    vaultAddress: string
+    vaultChainId: number
+    assetSymbol: string
+    protocol: string
+    weight: number
+    amount: string
+    quote?: any
+  }>
+}) {
+  if (!pocket.value) return
+  creatingPocket.value = true
+  try {
+    selectedPocketForTx.value = pocket.value
+    lastTxType.value = 'deposit'
+    lastTxAmount.value = payload.totalAmount
+
+    const strategy = STRATEGIES[payload.strategy_key]
+    for (const alloc of payload.allocations) {
+      reset()
+      const amtFixed = Number(alloc.amount).toFixed(payload.fromTokenDecimals)
+      const amtWei = parseUnits(amtFixed, payload.fromTokenDecimals).toString()
+
+      await lifiDeposit({
+        fromChain: payload.fromChainId,
+        fromToken: payload.fromToken,
+        fromAmount: amtWei,
+        vaultAddress: alloc.vaultAddress,
+        vaultChainId: alloc.vaultChainId,
+        vaultAssetAddress: strategy?.assetAddress,
+        vaultProtocol: alloc.protocol,
+      })
+
+      if (txState.value === 'failed') break
+    }
+
+    creatingPocket.value = false
+    await refetchAll()
+  } catch (e) {
+    creatingPocket.value = false
+    throw e
+  }
+}
+
+// Empty handler for "create" event (deposit-only mode never emits this)
+function handleCreatePocket() {}
+
+// ---- Withdraw dialog ----
+const showWithdrawDialog = ref(false)
+function openWithdrawDialog() {
+  if (pocket.value) showWithdrawDialog.value = true
+}
+
+// ---- Switch vault dialog ----
+const showSwitchVaultDialog = ref(false)
+function openSwitchVaultDialog() {
+  if (pocket.value) showSwitchVaultDialog.value = true
+}
+const currentVaultAddress = computed(() => allocations.value[0]?.address)
+
+// ---- Schedule dialog ----
+const showScheduleDialog = ref(false)
+const savingSchedule = ref(false)
+
+function openScheduleDialog() {
+  if (pocket.value) showScheduleDialog.value = true
+}
+
+async function handleSaveSchedule(payload: { recurring_day: number; recurring_amount: string; recurring_next_due: string }) {
+  if (!pocket.value) return
+  savingSchedule.value = true
+  try {
+    await profileStore.updatePocket(pocket.value.id, payload)
+    await profileStore.refreshPockets()
+    showScheduleDialog.value = false
+    toast.success('Deposit reminder set!')
+  } finally {
+    savingSchedule.value = false
+  }
+}
+
+async function handleRemoveSchedule() {
+  if (!pocket.value) return
+  savingSchedule.value = true
+  try {
+    await profileStore.updatePocket(pocket.value.id, {
+      recurring_day: null,
+      recurring_amount: null,
+      recurring_next_due: null,
+    })
+    await profileStore.refreshPockets()
+    showScheduleDialog.value = false
+    toast.success('Deposit reminder removed')
+  } finally {
+    savingSchedule.value = false
+  }
+}
 
 // ---- Lifecycle ----
 watch(pocket, () => { if (pocket.value) fetchHistory() }, { immediate: true })
@@ -365,13 +596,21 @@ watch([isConnected, isReady], ([connected, ready]) => {
 
             <!-- Actions -->
             <div class="flex gap-3 mt-6">
-              <Button class="flex-1 h-11 rounded-xl" @click="navigateTo('/app')">
+              <Button class="flex-1 h-11 rounded-xl" @click="openDepositDialog">
                 <Icon name="lucide:plus" class="w-4 h-4 mr-1.5" /> Deposit
               </Button>
-              <Button variant="outline" class="flex-1 h-11 rounded-xl" @click="navigateTo('/app')">
+              <Button variant="outline" class="flex-1 h-11 rounded-xl" @click="openWithdrawDialog">
                 <Icon name="lucide:arrow-up" class="w-4 h-4 mr-1.5" /> Withdraw
               </Button>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="w-full h-9 rounded-xl mt-2 text-xs text-muted-foreground hover:text-foreground"
+              @click="openSwitchVaultDialog"
+            >
+              <Icon name="lucide:repeat-2" class="w-3.5 h-3.5 mr-1.5" /> Switch vault
+            </Button>
           </CardContent>
         </Card>
 
@@ -416,14 +655,14 @@ watch([isConnected, isReady], ([connected, ready]) => {
                   <div class="w-2 h-2 rounded-full bg-muted-foreground" />
                   <span class="text-sm text-muted-foreground">Deposited</span>
                 </div>
-                <span class="text-sm font-medium">{{ displayUsd(principal * assetPrice) }}</span>
+                <span class="text-sm font-medium">{{ displayUsd(principal) }}</span>
               </div>
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
                   <div class="w-2 h-2 rounded-full bg-primary" />
                   <span class="text-sm text-muted-foreground">Yield</span>
                 </div>
-                <span class="text-sm font-medium text-primary">+{{ displayUsd(yieldEarned * assetPrice) }}</span>
+                <span class="text-sm font-medium text-primary">+{{ displayUsd(yieldEarnedUsd) }}</span>
               </div>
               <div class="h-px bg-border" />
               <div class="flex items-center justify-between">
@@ -496,13 +735,58 @@ watch([isConnected, isReady], ([connected, ready]) => {
               <p class="text-xs text-muted-foreground mb-3">
                 Set a monthly reminder to grow your pocket consistently.
               </p>
-              <Button variant="outline" size="sm" class="w-full" @click="navigateTo('/app')">
+              <Button variant="outline" size="sm" class="w-full" @click="openScheduleDialog">
                 <Icon name="lucide:calendar-plus" class="w-3.5 h-3.5 mr-1.5" />
                 Set reminder
               </Button>
             </template>
           </CardContent>
         </Card>
+
+        <!-- ── PERFORMANCE SECTION ── -->
+        <div class="lg:col-span-2 space-y-4">
+          <!-- KPI strip -->
+          <AppPocketKpis
+            :yield-earned-usd="yieldEarnedUsd"
+            :principal="principal"
+            :current-value-usd="usdValue"
+            :target-amount="pocket.target_amount ?? null"
+            :created-at="pocket.created_at"
+            :recurring-amount="pocket.recurring_amount"
+          />
+
+          <!-- Combined past + projection chart -->
+          <AppPocketPerformanceChart
+            :transactions="chartTransactions"
+            :current-value-usd="usdValue"
+            :apy="apyDecimal"
+            :target-amount="pocket.target_amount ?? null"
+            :pocket-created-at="pocket.created_at"
+          />
+
+          <!-- APY trend + Deposit pace side-by-side -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <AppPocketApyTrend
+              :apy-details="apyDetailsForPocket"
+              :current-apy="apyFormatted"
+            />
+            <AppPocketDepositPace
+              :transactions="chartTransactions"
+              :months-back="12"
+            />
+          </div>
+
+          <!-- Vault health + risk score -->
+          <AppVaultHealthCard :health="pocketHealth" title="Vault health & risk" />
+
+          <!-- What-if comparison -->
+          <AppPocketWhatIf
+            :current-strategy-key="(pocket.strategy_key as StrategyKey)"
+            :principal="principal"
+            :days-active="daysActiveForWhatIf"
+            :strategy-apys="allStrategyApys"
+          />
+        </div>
 
         <!-- ── Transaction History ── -->
         <Card class="lg:col-span-2">
@@ -596,17 +880,65 @@ watch([isConnected, isReady], ([connected, ready]) => {
               :apy-formatted="apyFormatted"
             />
           </div>
-          <div class="flex gap-3">
+          <div class="flex flex-wrap gap-2">
             <Button @click="downloadShareCard" :disabled="generatingImage">
-              <Icon name="lucide:download" class="w-4 h-4 mr-2" /> {{ generatingImage ? 'Generating...' : 'Save' }}
+              <Icon name="lucide:download" class="w-4 h-4 mr-2" /> {{ generatingImage ? 'Generating...' : 'Save PNG' }}
             </Button>
-            <Button variant="outline" @click="nativeShare">
-              <Icon name="lucide:share-2" class="w-4 h-4 mr-2" /> Share
+            <Button variant="outline" @click="shareToTwitter">
+              <Icon name="lucide:twitter" class="w-4 h-4 mr-2" /> X
             </Button>
-            <DialogClose as-child><Button variant="ghost">Close</Button></DialogClose>
+            <Button variant="outline" @click="shareToFarcaster">
+              <Icon name="lucide:hexagon" class="w-4 h-4 mr-2" /> Farcaster
+            </Button>
+            <Button variant="outline" @click="copyShareLink">
+              <Icon name="lucide:copy" class="w-4 h-4 mr-2" /> Copy
+            </Button>
+            <DialogClose as-child><Button variant="ghost" size="icon"><Icon name="lucide:x" class="w-4 h-4" /></Button></DialogClose>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+
+    <!-- Deposit Dialog (CreatePocketDialog in deposit-only mode) -->
+    <AppCreatePocketDialog
+      v-if="pocket"
+      v-model:open="showDepositDialog"
+      :creating="creatingPocket"
+      :tx-state="txState"
+      :tx-error="txError"
+      :wallet-tokens="walletTokens"
+      :loading-tokens="loadingTokens"
+      :user-address="address"
+      :pre-select-strategy="pocket.strategy_key as StrategyKey"
+      :initial-strategy="null"
+      @create="handleCreatePocket"
+      @create-and-deposit="handleCreateAndDeposit"
+      @fetch-tokens="fetchWalletTokens"
+    />
+
+    <!-- Withdraw Dialog -->
+    <AppPocketWithdrawDialog
+      v-model:open="showWithdrawDialog"
+      :pocket="pocket"
+      @done="refetchAll"
+    />
+
+    <!-- Schedule Dialog -->
+    <AppScheduleDialog
+      v-model:open="showScheduleDialog"
+      :pocket="pocket"
+      :asset-price="pocket ? profileStore.getAssetPrice(pocket.strategy_key) : 0"
+      :saving="savingSchedule"
+      @save="handleSaveSchedule"
+      @remove="handleRemoveSchedule"
+    />
+
+    <!-- Switch Vault Dialog -->
+    <AppPocketSwitchVaultDialog
+      v-model:open="showSwitchVaultDialog"
+      :pocket="pocket"
+      :current-vault-address="currentVaultAddress"
+      @done="refetchAll"
+    />
   </div>
 </template>

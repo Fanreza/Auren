@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useCurrency } from '~/composables/useCurrency'
+
 const props = defineProps<{
   totalValueUsd: number
   netContributedUsd: number
@@ -9,23 +11,18 @@ const props = defineProps<{
   loading?: boolean
 }>()
 
-/** Format as "$12.34" for USD. */
+const { format } = useCurrency()
+
 function fmtUsd(n: number): string {
-  const abs = Math.abs(n)
-  if (abs < 0.01 && abs > 0) return (n >= 0 ? '' : '-') + '$<0.01'
-  return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
+  return format(n)
 }
 
-/** Dual-unit PnL display: "$0.20 / 0.20 USDC" */
+/** Dual-unit PnL display: "{localized} / X.XX USDC" */
 function fmtDual(n: number): string {
-  const sign = n < 0 ? '-' : '+'
-  const abs = Math.abs(n)
-  if (abs < 0.01) return sign + '$0.00 / 0.00 USDC'
-  const s = abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return `${sign}$${s} / ${s} USDC`
+  const sign = n < 0 ? '' : '+'
+  const localized = format(n, { signDisplay: 'always' })
+  const usdcAbs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `${localized} / ${sign}${usdcAbs} USDC`
 }
 
 function fmtPct(n: number): string {
@@ -54,6 +51,7 @@ const pnlPositive = computed(() => props.unrealizedPnlUsd >= 0)
       <div class="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
         <Icon name="lucide:arrow-down-to-line" class="w-3.5 h-3.5" />
         <span class="uppercase tracking-wider">Net in</span>
+        <AppHelpTip term="cost_basis" />
       </div>
       <p class="text-2xl font-bold tabular-nums">{{ fmtUsd(netContributedUsd) }}</p>
       <p class="text-[11px] text-muted-foreground/60 mt-1">deposits − withdrawals</p>
@@ -67,6 +65,7 @@ const pnlPositive = computed(() => props.unrealizedPnlUsd >= 0)
       <div class="flex items-center gap-1.5 text-xs mb-2" :class="pnlPositive ? 'text-primary/80' : 'text-destructive/80'">
         <Icon :name="pnlPositive ? 'lucide:trending-up' : 'lucide:trending-down'" class="w-3.5 h-3.5" />
         <span class="uppercase tracking-wider">Unrealized PnL</span>
+        <AppHelpTip term="unrealized_pnl" />
       </div>
       <p class="text-lg font-bold tabular-nums leading-tight" :class="pnlPositive ? 'text-primary' : 'text-destructive'">
         {{ fmtDual(unrealizedPnlUsd) }}

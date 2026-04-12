@@ -9,6 +9,11 @@ import { useCoinGecko } from '~/composables/useCoinGecko'
 import { useWalletTokens } from '~/composables/useWalletTokens'
 import { useTransactionRecorder } from '~/composables/useTransactionRecorder'
 import { useDashboardStats } from '~/composables/useDashboardStats'
+import { useAchievements } from '~/composables/useAchievements'
+import { useStreak } from '~/composables/useStreak'
+import { useTour } from '~/composables/useTour'
+import { useApyDriftAlert } from '~/composables/useApyDriftAlert'
+import { useNotifications } from '~/composables/useNotifications'
 import { storeToRefs } from 'pinia'
 import { useProfileStore } from '~/stores/useProfileStore'
 import { toast } from 'vue-sonner'
@@ -131,6 +136,16 @@ async function refetchAll() {
   await profileStore.refreshPockets()
   await fetchAllTransactions()
 }
+
+// Funded event handler — RPC state can be stale for a few seconds after a tx confirms,
+// and cross-chain bridges may take 10-60s to deliver. Poll a few times to catch the new balance.
+async function handleFunded() {
+  await refetchAll()                                  // immediate
+  setTimeout(() => { refetchAll() }, 3000)            // ~RPC cache window
+  setTimeout(() => { refetchAll() }, 10_000)          // bridge delivery window
+  setTimeout(() => { refetchAll() }, 30_000)          // slow bridge fallback
+}
+
 
 // Track for transaction recorder
 const selectedPocket = ref<DbPocket | null>(null)
@@ -373,6 +388,65 @@ const totalPortfolioUsd = computed(() => {
 watch([pockets, pocketPositions], async () => {
   if (pockets.value.length) await fetchAllTransactions()
 }, { immediate: true, deep: true })
+
+// ---- First-time user tour ----
+const { showDashboardTour } = useTour()
+watch(isConnected, (connected) => {
+  if (connected) {
+    // Run after pockets/UI render
+    setTimeout(() => showDashboardTour(), 1500)
+  }
+}, { immediate: true })
+
+// ---- Daily APY drift check ----
+const { runCheck: runApyDriftCheck } = useApyDriftAlert()
+watch(pockets, (list) => {
+  if (list.length) setTimeout(() => runApyDriftCheck(), 3000)
+}, { immediate: true })
+
+// ---- Reminder notifications ----
+// Fires browser notifications for pockets with reminders due today/tomorrow.
+const { fire: fireNotification } = useNotifications()
+watch(pockets, (list) => {
+  if (!list.length) return
+  setTimeout(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    for (const p of list) {
+      if (!p.recurring_next_due) continue
+      const due = new Date(p.recurring_next_due + 'T00:00:00')
+      const days = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+      if (days === 0) {
+        fireNotification({
+          title: `${p.name} reminder due today`,
+          body: p.recurring_amount ? `Time to add $${p.recurring_amount} to your savings goal` : 'Time to make your scheduled deposit',
+          tag: `reminder-${p.id}-due`,
+          url: `/pocket/${p.id}`,
+        })
+      } else if (days === 1) {
+        fireNotification({
+          title: `${p.name} reminder tomorrow`,
+          body: 'Heads up — your scheduled deposit is due tomorrow',
+          tag: `reminder-${p.id}-tomorrow`,
+          url: `/pocket/${p.id}`,
+        })
+      }
+    }
+  }, 5000)
+}, { immediate: true })
+
+// ---- Achievements ----
+const streak = useStreak()
+const achievements = useAchievements(() => ({
+  totalSavedUsd: dashTotalValueUsd.value,
+  yieldEarnedUsd: unrealizedPnlUsd.value,
+  streakDays: streak.current.value,
+  pocketCount: pockets.value.length,
+  uniqueStrategies: new Set(pockets.value.map(p => p.strategy_key)).size,
+  hasGoal: pockets.value.some(p => !!p.target_amount),
+  hasReminder: pockets.value.some(p => p.recurring_day != null),
+  depositCount: allTransactions.value.filter(t => t.type === 'deposit').length,
+}))
 
 const averageApy = computed(() => {
   const apys: number[] = []
@@ -626,6 +700,12 @@ const averageApy = computed(() => {
                 <p class="text-[11px] text-muted-foreground/50">Live · refreshes on every action</p>
               </div>
 
+              <!-- Today's snapshot + streak -->
+              <AppTodayCard
+                :total-value-usd="dashTotalValueUsd"
+                :avg-apy="dashAvgApy"
+              />
+
               <!-- KPI strip -->
               <AppDashboardKpi
                 :total-value-usd="dashTotalValueUsd"
@@ -642,6 +722,13 @@ const averageApy = computed(() => {
                 :series="chartSeries"
                 :current-value-usd="dashTotalValueUsd"
                 :loading="loadingTx"
+              />
+
+              <!-- Achievements grid -->
+              <AppAchievements
+                :unlocks="achievements.unlocks.value"
+                :unlocked-count="achievements.unlockedCount.value"
+                :total-count="achievements.totalCount.value"
               />
 
               <!-- Allocation + Activity (side-by-side on desktop) -->
@@ -707,7 +794,7 @@ const averageApy = computed(() => {
         :address="address"
         :wallet-tokens="walletTokens"
         :default-tab="fundDefaultTab"
-        @funded="refetchAll"
+        @funded="handleFunded"
       />
 
       <AppPocketWithdrawDialog

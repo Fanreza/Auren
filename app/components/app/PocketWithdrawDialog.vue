@@ -165,6 +165,26 @@ const canWithdraw = computed(() =>
   (isSameToken.value || !!quote.value),
 )
 
+// ── Opportunity cost preview ────────────────────────────────────────────────
+// Show how much yield user would forfeit by withdrawing now vs holding 1 more month.
+const opportunityCost = computed(() => {
+  if (!strategy.value || !amount.value) return null
+  const amt = parseFloat(amount.value)
+  if (isNaN(amt) || amt <= 0) return null
+  const apyStr = profileStore.getStrategyApy(strategy.value.key)
+  if (!apyStr) return null
+  const apy = parseFloat(apyStr) / 100
+  if (apy <= 0) return null
+  // 30-day yield = principal × (1 + apy)^(30/365) - principal
+  const monthYield = amt * (Math.pow(1 + apy, 30 / 365) - 1)
+  // Convert to USD (USDC = 1, others use price)
+  const price = profileStore.getAssetPrice(strategy.value.key) || 0
+  return {
+    monthUsd: monthYield * price,
+    yearUsd: amt * apy * price,
+  }
+})
+
 function setMax() { amount.value = vaultBalance.value }
 
 // Fetch quote when output token differs from vault token
@@ -490,13 +510,38 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
           </div>
         </div>
 
-            <!-- Quote status -->
-        <div v-if="quotesLoading" class="flex items-center gap-1.5 text-xs text-muted-foreground px-1">
-          <Icon name="lucide:loader-2" class="w-3 h-3 animate-spin" /> Finding best route...
-        </div>
-        <div v-else-if="!isSameToken && quote" class="text-[11px] text-muted-foreground/50 px-1">
-          Swap via LI.FI
-        </div>
+        <!-- Detailed transaction preview -->
+        <AppTxPreview
+          v-if="!isSameToken && amount && (quotesLoading || quote)"
+          :quote="quote"
+          :loading="quotesLoading"
+          title="Withdraw Preview"
+          :subtitle="`${strategy?.assetSymbol ?? ''} vault → ${selectedOutput.symbol}`"
+        />
+
+        <!-- Same-token withdraw: manual preview (direct vault redeem) -->
+        <AppTxPreview
+          v-else-if="isSameToken && amount && parseFloat(amount) > 0 && strategy"
+          :manual="{
+            fromChainId: 8453,
+            fromChainName: 'Base',
+            fromTokenSymbol: `${strategy.assetSymbol} vault shares`,
+            fromTokenLogo: strategy.vaultLogo,
+            fromAmount: amount,
+            toChainId: 8453,
+            toChainName: 'Base',
+            toTokenSymbol: strategy.assetSymbol,
+            toTokenLogo: strategy.vaultLogo,
+            toAmount: amount,
+            steps: [
+              { label: 'Redeem', via: allocs[0]?.protocol ?? 'vault contract' },
+            ],
+            estTimeSeconds: 5,
+          }"
+          title="Withdraw Preview"
+          :subtitle="`Direct redeem from ${strategy?.assetSymbol} vault`"
+        />
+
         <div v-else-if="!isSameToken && amount && parseFloat(amount) > 0 && !quotesLoading && !quote" class="text-[11px] text-amber-400 px-1">
           No route found — try a different output token
         </div>
@@ -518,6 +563,21 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
               :class="withdrawStep === 'confirming' ? 'text-primary animate-spin' : 'text-muted-foreground/40'"
             />
             <span class="text-sm" :class="withdrawStep === 'confirming' ? 'text-foreground' : 'text-muted-foreground/40'">Confirming</span>
+          </div>
+        </div>
+
+        <!-- Opportunity cost warning -->
+        <div
+          v-if="opportunityCost && opportunityCost.monthUsd >= 0.001 && !withdrawing"
+          class="rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 flex items-start gap-2"
+        >
+          <Icon name="lucide:trending-up" class="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+          <div class="flex-1 text-[11px] text-amber-200/90 leading-relaxed">
+            <p class="font-semibold">You'll forfeit ~${{ opportunityCost.monthUsd.toFixed(2) }} in yield</p>
+            <p class="text-amber-200/60 mt-0.5">
+              by withdrawing now instead of holding 1 more month
+              ({{ '~$' + opportunityCost.yearUsd.toFixed(2) }} per year)
+            </p>
           </div>
         </div>
 

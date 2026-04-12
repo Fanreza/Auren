@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { formatUnits } from 'viem'
 import { STRATEGIES, type StrategyKey } from '~/config/strategies'
+import { useCurrency } from '~/composables/useCurrency'
 import type { DbPocket } from '~/types/database'
+
+const { format: fmtCurrency } = useCurrency()
 
 const props = defineProps<{
   pocket: DbPocket
@@ -91,17 +94,30 @@ const timelineDisplay = computed(() => {
   return { label: dateStr, urgent: false }
 })
 
-const reminderDue = computed(() => {
-  if (!props.pocket.recurring_next_due) return false
+const reminderInfo = computed(() => {
+  if (!props.pocket.recurring_next_due) return null
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const due = new Date(props.pocket.recurring_next_due + 'T00:00:00')
-  return Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) <= 1
+  const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+
+  // Optional amount preview
+  const amount = props.pocket.recurring_amount
+    ? '$' + parseFloat(props.pocket.recurring_amount).toLocaleString('en-US', { maximumFractionDigits: 2 })
+    : null
+
+  if (diffDays < 0) return { label: 'Reminder overdue', urgent: true, amount }
+  if (diffDays === 0) return { label: 'Reminder today', urgent: true, amount }
+  if (diffDays === 1) return { label: 'Reminder tomorrow', urgent: true, amount }
+  if (diffDays <= 7) return { label: `Reminder in ${diffDays} days`, urgent: false, amount }
+  return null  // hide if more than a week away
 })
 
+// Backwards compat: small dot still pulses when very urgent
+const reminderDue = computed(() => reminderInfo.value?.urgent === true)
+
 function displayUsd(value: number): string {
-  if (value === 0) return '$0.00'
-  return '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return fmtCurrency(value)
 }
 </script>
 
@@ -183,6 +199,39 @@ function displayUsd(value: number): string {
           <span class="text-[10px] text-muted-foreground">{{ Math.round(progressRaw) }}% saved</span>
           <span class="text-[10px] text-muted-foreground">{{ displayUsd(pocket.target_amount) }} goal</span>
         </div>
+      </div>
+
+      <!-- Reminder banner (when next deposit is due within 7 days) -->
+      <div
+        v-if="reminderInfo"
+        class="mb-3 flex items-center gap-2 px-3 py-2 rounded-xl border"
+        :class="reminderInfo.urgent
+          ? 'bg-amber-500/10 border-amber-500/30'
+          : 'bg-white/5 border-white/10'"
+      >
+        <Icon
+          name="lucide:bell"
+          class="w-3.5 h-3.5 shrink-0"
+          :class="reminderInfo.urgent ? 'text-amber-400' : 'text-muted-foreground'"
+        />
+        <div class="flex-1 min-w-0 flex items-baseline gap-1.5">
+          <span
+            class="text-[11px] font-semibold"
+            :class="reminderInfo.urgent ? 'text-amber-300' : 'text-foreground/80'"
+          >{{ reminderInfo.label }}</span>
+          <span v-if="reminderInfo.amount" class="text-[10px] text-muted-foreground/70 truncate">
+            · {{ reminderInfo.amount }}
+          </span>
+        </div>
+        <button
+          class="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md transition-colors"
+          :class="reminderInfo.urgent
+            ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'
+            : 'bg-white/10 text-foreground/70 hover:bg-white/15'"
+          @click.stop="$emit('deposit')"
+        >
+          Add now
+        </button>
       </div>
 
       <!-- Action row -->

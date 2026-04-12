@@ -3,6 +3,50 @@ import { storeToRefs } from "pinia";
 import { BRAND } from "~/config/brand";
 import { usePrivyAuth } from "~/composables/usePrivy";
 import { useProfileStore } from "~/stores/useProfileStore";
+import { useCurrency } from "~/composables/useCurrency";
+import { useNotifications } from "~/composables/useNotifications";
+import { useTaxExport } from "~/composables/useTaxExport";
+import { useDashboardStats } from "~/composables/useDashboardStats";
+import { toast } from "vue-sonner";
+
+const currencyComposable = useCurrency();
+const notifs = useNotifications();
+const { downloadTaxCsv } = useTaxExport();
+const { allTransactions, fetchAllTransactions } = useDashboardStats();
+const { pockets } = storeToRefs(profileStore);
+
+// Pull tx history once pockets are loaded so tax export has data
+watch(pockets, (list) => {
+	if (list.length) fetchAllTransactions();
+}, { immediate: true });
+
+async function handleTaxExport() {
+	// Refetch before exporting to ensure we have latest tx
+	await fetchAllTransactions();
+	if (!allTransactions.value.length) {
+		toast.info("No transactions yet — make a deposit or withdrawal first");
+		return;
+	}
+	downloadTaxCsv(
+		allTransactions.value.map(t => ({
+			pocket_name: t.pocket_name,
+			asset_symbol: t.asset_symbol,
+			type: t.type as any,
+			amount: t.amount,
+			timestamp: t.timestamp,
+			tx_hash: t.tx_hash,
+		})),
+	);
+	toast.success(`Exported ${allTransactions.value.length} transactions`);
+}
+
+async function handleEnableNotifications() {
+	if (notifs.enabled.value) {
+		notifs.disable();
+	} else {
+		await notifs.requestPermission();
+	}
+}
 
 const { isConnected, address, loginMethod, logout, eoaWalletAddress } = usePrivyAuth();
 const profileStore = useProfileStore();
@@ -349,6 +393,83 @@ function truncate(addr: string) {
 									</div>
 								</div>
 							</template>
+						</CardContent>
+					</Card>
+
+					<Separator />
+
+					<!-- Tax export -->
+					<Card>
+						<CardContent class="p-5">
+							<div class="flex items-center justify-between">
+								<div class="flex-1">
+									<h3 class="text-sm font-semibold flex items-center gap-2">
+										<Icon name="lucide:file-spreadsheet" class="w-4 h-4" />
+										Tax report
+									</h3>
+									<p class="text-[11px] text-muted-foreground/60 mt-0.5">
+										CSV with FIFO cost basis for all your withdrawals
+									</p>
+								</div>
+								<Button variant="outline" size="sm" @click="handleTaxExport">
+									<Icon name="lucide:download" class="w-3.5 h-3.5 mr-1.5" />
+									Export
+								</Button>
+							</div>
+						</CardContent>
+					</Card>
+
+					<Separator />
+
+					<!-- Notifications preference -->
+					<Card v-if="notifs.supported.value">
+						<CardContent class="p-5">
+							<div class="flex items-center justify-between">
+								<div class="flex-1">
+									<h3 class="text-sm font-semibold flex items-center gap-2">
+										<Icon name="lucide:bell" class="w-4 h-4" />
+										Browser notifications
+									</h3>
+									<p class="text-[11px] text-muted-foreground/60 mt-0.5">
+										Get reminded when scheduled deposits are due
+									</p>
+								</div>
+								<Button
+									:variant="notifs.enabled.value ? 'outline' : 'default'"
+									size="sm"
+									@click="handleEnableNotifications"
+								>
+									{{ notifs.enabled.value ? 'Disable' : notifs.permission.value === 'denied' ? 'Blocked' : 'Enable' }}
+								</Button>
+							</div>
+						</CardContent>
+					</Card>
+
+					<Separator v-if="notifs.supported.value" />
+
+					<!-- Currency preference -->
+					<Card>
+						<CardContent class="p-5">
+							<div class="flex items-center justify-between mb-3">
+								<div>
+									<h3 class="text-sm font-semibold">Display currency</h3>
+									<p class="text-[11px] text-muted-foreground/60 mt-0.5">All amounts will be shown in this currency</p>
+								</div>
+								<span class="text-2xl">{{ currencyComposable.current.value.flag }}</span>
+							</div>
+							<div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+								<button
+									v-for="c in currencyComposable.currencies" :key="c.code"
+									class="flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs transition-colors"
+									:class="currencyComposable.selected.value === c.code
+										? 'border-primary bg-primary/10 font-semibold'
+										: 'border-border hover:border-primary/40 text-muted-foreground'"
+									@click="currencyComposable.setCurrency(c.code)"
+								>
+									<span class="text-base">{{ c.flag }}</span>
+									<span>{{ c.code }}</span>
+								</button>
+							</div>
 						</CardContent>
 					</Card>
 

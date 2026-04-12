@@ -87,6 +87,11 @@ import { BRAND } from '~/config/brand'
                 <Icon name="lucide:external-link" class="w-3 h-3" />
               </a>
             </li>
+            <li>
+              <NuxtLink to="/status" class="text-muted-foreground hover:text-foreground transition-colors">
+                Status
+              </NuxtLink>
+            </li>
           </ul>
         </div>
       </div>

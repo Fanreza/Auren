@@ -759,15 +759,30 @@ watch(mode, (val) => {
           <p class="text-[11px] text-muted-foreground/50 mt-2 font-mono">{{ truncate(address) }}</p>
         </div>
 
-        <!-- Route info -->
-        <div v-if="quotesLoading" class="flex items-center gap-1.5 text-xs text-muted-foreground px-1">
-          <Icon name="lucide:loader-2" class="w-3 h-3 animate-spin" /> Finding best route...
-        </div>
-        <div v-else-if="quote && !isDirectUsdc" class="flex items-center gap-3 text-[11px] text-muted-foreground/60 px-1">
-          <span v-if="fromToken?.chainId !== 8453" class="flex items-center gap-1 text-amber-400">
-            <Icon name="lucide:zap" class="w-3 h-3" /> Cross-chain
-          </span>
-          <span>via LI.FI</span>
+        <!-- Detailed route preview -->
+        <AppTxPreview
+          v-if="!isDirectUsdc && (quotesLoading || quote)"
+          :quote="quote"
+          :loading="quotesLoading"
+          title="Transaction Preview"
+          subtitle="Full route + fees + estimated time"
+        />
+
+        <!-- Direct USDC transfer (no swap) summary -->
+        <div v-else-if="isDirectUsdc && amount" class="rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-1 text-[11px]">
+          <p class="text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider mb-1">Direct transfer</p>
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground">Action</span>
+            <span>USDC ERC-20 transfer</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground">Sending</span>
+            <span class="tabular-nums">{{ amount }} USDC</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground">To</span>
+            <span class="font-mono text-[10px]">{{ truncate(address) }}</span>
+          </div>
         </div>
 
         <!-- Progress steps (during transfer) -->
@@ -979,6 +994,32 @@ watch(mode, (val) => {
           />
         </div>
 
+        <!-- Withdraw preview -->
+        <AppTxPreview
+          v-if="withdrawAmount && parseFloat(withdrawAmount) > 0 && withdrawDest"
+          :manual="{
+            fromChainId: 8453,
+            fromChainName: 'Base',
+            fromTokenSymbol: 'USDC',
+            fromTokenLogo: 'https://assets.coingecko.com/coins/images/6319/standard/usdc.png',
+            fromAmount: withdrawAmount,
+            fromAmountUsd: parseFloat(withdrawAmount),
+            toChainId: 8453,
+            toChainName: 'Base',
+            toTokenSymbol: 'USDC',
+            toTokenLogo: 'https://assets.coingecko.com/coins/images/6319/standard/usdc.png',
+            toAmount: withdrawAmount,
+            toAmountUsd: parseFloat(withdrawAmount),
+            steps: [
+              { label: 'Transfer', via: `USDC ERC-20 → ${withdrawTo === 'eoa' ? 'your wallet' : 'custom address'}` },
+            ],
+            estTimeSeconds: 5,
+            feesUsd: gasReserveUsdc,
+          }"
+          title="Withdraw Preview"
+          subtitle="Direct USDC transfer from savings account"
+        />
+
         <!-- Progress -->
         <div v-if="withdrawing || withdrawDone" class="rounded-2xl bg-muted/40 border border-border/40 p-4 space-y-3">
           <div class="flex items-center gap-3">
@@ -1107,13 +1148,14 @@ watch(mode, (val) => {
           </div>
         </div>
 
-        <!-- Route info -->
-        <div v-if="swapQuoteLoading" class="flex items-center gap-1.5 text-xs text-muted-foreground px-1">
-          <Icon name="lucide:loader-2" class="w-3 h-3 animate-spin" /> Finding best route...
-        </div>
-        <div v-else-if="swapQuote" class="text-[11px] text-muted-foreground/50 px-1">
-          via LI.FI · slippage 0.5%
-        </div>
+        <!-- Detailed route preview -->
+        <AppTxPreview
+          v-if="swapAmount && (swapQuoteLoading || swapQuote)"
+          :quote="swapQuote"
+          :loading="swapQuoteLoading"
+          title="Swap Preview"
+          :subtitle="`${swapFromToken?.symbol ?? ''} → ${swapToToken.symbol} · slippage 0.5%`"
+        />
         <div v-else-if="swapAmount && parseFloat(swapAmount) > 0 && !swapQuoteLoading && !swapIsSameToken" class="text-[11px] text-amber-400 px-1">
           No route found — try a different pair
         </div>

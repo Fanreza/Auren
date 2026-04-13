@@ -248,9 +248,15 @@ async function handleCreateAndDeposit(payload: {
     vaultAddress: string
     vaultChainId: number
     assetSymbol: string
+    /** Underlying asset address for THIS allocation (e.g. WETH for a WETH vault).
+     *  Not the strategy's primary asset — the per-allocation asset is what the
+     *  cross-asset swap path needs. */
+    assetAddress?: string
+    vaultSymbol?: string
     protocol: string
     weight: number
     amount: string
+    displayOrder?: number
     quote?: any
   }>
 }) {
@@ -298,27 +304,37 @@ async function handleCreateAndDeposit(payload: {
 
     selectedPocket.value = pocket
     lastTxType.value = 'deposit'
-    lastTxAmount.value = payload.totalAmount
 
-    // Execute each allocation's deposit sequentially via LI.FI Composer
+    // Execute each allocation's deposit sequentially via LI.FI Composer.
+    // Phase 4: per-allocation handling for both asset routing AND tx recording.
+    //
+    // CRITICAL: lastTxAmount must be set to the alloc-specific USD amount BEFORE
+    // each lifiDeposit call. The transaction recorder watches txState→confirmed
+    // and would otherwise record the FULL pocket total once per allocation,
+    // double-counting the principal in the dashboard PnL.
     const strategy = STRATEGIES[payload.strategy_key]
     for (const alloc of payload.allocations) {
       reset()
       const amtFixed = Number(alloc.amount).toFixed(payload.fromTokenDecimals)
       const amtWei = parseUnits(amtFixed, payload.fromTokenDecimals).toString()
 
-      // Always fetch fresh quote at execute time — cached quotes go stale
+      // Per-allocation amount → recorder picks this up on the next confirmed event
+      lastTxAmount.value = alloc.amount
+
       await lifiDeposit({
         fromChain: payload.fromChainId,
         fromToken: payload.fromToken,
         fromAmount: amtWei,
         vaultAddress: alloc.vaultAddress,
         vaultChainId: alloc.vaultChainId,
-        vaultAssetAddress: strategy?.assetAddress,
+        vaultAssetAddress: alloc.assetAddress ?? strategy?.assetAddress,
         vaultProtocol: alloc.protocol,
       })
 
-      if (txState.value === 'failed') break
+      if (txState.value === 'failed') {
+        toast.error(`Allocation to ${alloc.vaultAddress.slice(0, 8)}… failed — remaining allocations skipped`)
+        break
+      }
     }
 
     // Release the dialog immediately so success state renders while refetch runs in background

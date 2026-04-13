@@ -497,11 +497,14 @@ async function handleCreateAndDeposit(payload: {
     lastTxType.value = 'deposit'
     lastTxAmount.value = payload.totalAmount
 
+    // Phase 4: per-allocation asset routing + per-allocation tx amount so the
+    // recorder doesn't double-count the principal across multiple sub-deposits.
     const strategy = STRATEGIES[payload.strategy_key]
     for (const alloc of payload.allocations) {
       reset()
       const amtFixed = Number(alloc.amount).toFixed(payload.fromTokenDecimals)
       const amtWei = parseUnits(amtFixed, payload.fromTokenDecimals).toString()
+      lastTxAmount.value = alloc.amount
 
       await lifiDeposit({
         fromChain: payload.fromChainId,
@@ -509,11 +512,14 @@ async function handleCreateAndDeposit(payload: {
         fromAmount: amtWei,
         vaultAddress: alloc.vaultAddress,
         vaultChainId: alloc.vaultChainId,
-        vaultAssetAddress: strategy?.assetAddress,
+        vaultAssetAddress: (alloc as any).assetAddress ?? strategy?.assetAddress,
         vaultProtocol: alloc.protocol,
       })
 
-      if (txState.value === 'failed') break
+      if (txState.value === 'failed') {
+        toast.error(`Allocation to ${alloc.vaultAddress.slice(0, 8)}… failed — remaining skipped`)
+        break
+      }
     }
 
     creatingPocket.value = false

@@ -54,6 +54,10 @@ const editingName = ref(false);
 const nameInput = ref("");
 
 // ---- Referral ----
+// User records in DB are keyed by EOA address (stable across smart account
+// init). For Privy social/embedded login, `address` is the smart account but
+// the user row is the EOA. Always prefer eoaWalletAddress when available.
+const dbAddress = computed(() => eoaWalletAddress.value ?? address.value);
 const { getReferralCode, getReferralStats } = useUserData();
 const referralCode = ref<string | null>(null);
 const referralCount = ref(0);
@@ -70,10 +74,10 @@ const loadingReferral = ref(false);
 const generatingCode = ref(false);
 
 async function loadReferral() {
-	if (!address.value) return;
+	if (!dbAddress.value) return;
 	loadingReferral.value = true;
 	try {
-		const stats = await getReferralStats(address.value);
+		const stats = await getReferralStats(dbAddress.value);
 		if (stats) {
 			referralCode.value = stats.code;
 			referralCount.value = stats.count;
@@ -88,10 +92,10 @@ async function loadReferral() {
 }
 
 async function generateCode() {
-	if (!address.value) return;
+	if (!dbAddress.value) return;
 	generatingCode.value = true;
 	try {
-		const code = await getReferralCode(address.value);
+		const code = await getReferralCode(dbAddress.value);
 		referralCode.value = code;
 	} catch (e) {
 		console.error("[referral] generateCode failed:", e);
@@ -107,7 +111,7 @@ function startEditCode() {
 }
 
 async function saveCustomCode() {
-	if (!address.value) return;
+	if (!dbAddress.value) return;
 	const code = customCodeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 	if (code.length < 3 || code.length > 12) {
 		customCodeError.value = "Must be 3-12 characters (letters and numbers only)";
@@ -118,7 +122,7 @@ async function saveCustomCode() {
 	try {
 		const res = await $fetch<{ code: string }>("/api/referral/generate", {
 			method: "POST",
-			body: { address: address.value, code },
+			body: { address: dbAddress.value, code },
 		});
 		referralCode.value = res.code;
 		editingCode.value = false;
@@ -152,7 +156,7 @@ function shareReferral() {
 }
 
 watch(
-	address,
+	dbAddress,
 	(addr) => {
 		if (addr) loadReferral();
 	},

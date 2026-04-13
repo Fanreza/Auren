@@ -6,6 +6,16 @@ import { usePrivyAuth } from '~/composables/usePrivy'
 import { BRAND } from '~/config/brand'
 import { toast } from 'vue-sonner'
 import type { StrategyWithAllocations } from '~/types/database'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '~/components/ui/alert-dialog'
 
 const route = useRoute()
 const store = useStrategyStore()
@@ -87,23 +97,35 @@ function allocationApy(vaultAddress: string): number {
   return vault ? vault.apy * 100 : 0
 }
 
+const followLoading = ref(false)
+const forkLoading = ref(false)
+const deleteLoading = ref(false)
+
 async function handleFollow() {
-  if (!profileStore.currentUser || !strategy.value) return
-  const result = await store.toggleFollow(strategy.value.id, profileStore.currentUser.id)
-  toast.success(result ? 'Following strategy' : 'Unfollowed')
-  strategy.value = await store.fetchById(strategy.value.id)
+  if (!profileStore.currentUser || !strategy.value || followLoading.value) return
+  followLoading.value = true
+  try {
+    const result = await store.toggleFollow(strategy.value.id, profileStore.currentUser.id)
+    toast.success(result ? 'Following strategy' : 'Unfollowed')
+    strategy.value = await store.fetchById(strategy.value.id)
+  } finally {
+    followLoading.value = false
+  }
 }
 
 async function handleFork() {
-  if (!profileStore.currentUser || !strategy.value) return
-  const forked = await store.fork(strategy.value.id, profileStore.currentUser.id)
-  if (forked) {
-    toast.success('Copied to My strategies')
-    // Refresh source to reflect new follower count
-    strategy.value = await store.fetchById(strategy.value.id)
-    // Refresh my strategies list so detail recognizes the new copy
-    await store.fetchMine(profileStore.currentUser.id)
-    navigateTo(`/strategy/${forked.id}`)
+  if (!profileStore.currentUser || !strategy.value || forkLoading.value) return
+  forkLoading.value = true
+  try {
+    const forked = await store.fork(strategy.value.id, profileStore.currentUser.id)
+    if (forked) {
+      toast.success('Copied to My strategies')
+      strategy.value = await store.fetchById(strategy.value.id)
+      await store.fetchMine(profileStore.currentUser.id)
+      navigateTo(`/strategy/${forked.id}`)
+    }
+  } finally {
+    forkLoading.value = false
   }
 }
 
@@ -112,13 +134,25 @@ function goToMyCopy() {
   if (copy) navigateTo(`/strategy/${copy.id}`)
 }
 
-async function handleDelete() {
+const showDeleteConfirm = ref(false)
+
+function handleDelete() {
   if (!profileStore.currentUser || !strategy.value || !isOwner.value) return
-  if (!confirm('Delete this strategy? This cannot be undone.')) return
-  const ok = await store.deleteStrategy(strategy.value.id, profileStore.currentUser.id)
-  if (ok) {
-    toast.success('Strategy deleted')
-    navigateTo('/strategy')
+  showDeleteConfirm.value = true
+}
+
+async function confirmDelete() {
+  if (!profileStore.currentUser || !strategy.value || deleteLoading.value) return
+  deleteLoading.value = true
+  try {
+    const ok = await store.deleteStrategy(strategy.value.id, profileStore.currentUser.id)
+    if (ok) {
+      toast.success('Strategy deleted')
+      showDeleteConfirm.value = false
+      navigateTo('/strategy')
+    }
+  } finally {
+    deleteLoading.value = false
   }
 }
 
@@ -294,15 +328,24 @@ function truncate(addr: string): string {
               <Button
                 v-else
                 class="flex-1 h-11 rounded-xl"
-                :disabled="!isConnected"
+                :disabled="!isConnected || forkLoading"
                 @click="handleFork"
               >
-                <Icon name="lucide:copy" class="w-4 h-4 mr-1.5" />
-                Copy to my strategies
+                <Icon v-if="forkLoading" name="lucide:loader-2" class="w-4 h-4 mr-1.5 animate-spin" />
+                <Icon v-else name="lucide:copy" class="w-4 h-4 mr-1.5" />
+                {{ forkLoading ? 'Copying…' : 'Copy to my strategies' }}
               </Button>
 
-              <Button v-if="!strategy.is_system && !isOwner" variant="outline" class="h-11" @click="handleFollow">
-                <Icon name="lucide:heart" class="w-4 h-4 mr-1.5" /> Follow
+              <Button
+                v-if="!strategy.is_system && !isOwner"
+                variant="outline"
+                class="h-11"
+                :disabled="followLoading"
+                @click="handleFollow"
+              >
+                <Icon v-if="followLoading" name="lucide:loader-2" class="w-4 h-4 mr-1.5 animate-spin" />
+                <Icon v-else name="lucide:heart" class="w-4 h-4 mr-1.5" />
+                {{ followLoading ? '…' : 'Follow' }}
               </Button>
               <Button
                 v-if="isOwner && !strategy.is_system"
@@ -361,6 +404,28 @@ function truncate(addr: string): string {
         </div>
       </template>
     </main>
+
+    <AlertDialog v-model:open="showDeleteConfirm">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this strategy?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This cannot be undone. Your strategy will be removed from your library permanently. Copies other users forked from it stay untouched.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel :disabled="deleteLoading">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            :disabled="deleteLoading"
+            @click="confirmDelete"
+          >
+            <Icon v-if="deleteLoading" name="lucide:loader-2" class="w-4 h-4 mr-1.5 animate-spin" />
+            {{ deleteLoading ? 'Deleting…' : 'Delete strategy' }}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <LandingFooter />
   </div>

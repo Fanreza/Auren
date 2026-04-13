@@ -24,19 +24,28 @@ const strategy = computed(() =>
   props.pocket ? STRATEGIES[props.pocket.strategy_key as StrategyKey] : null,
 )
 
-// Active vaults (current top by APY) + legacy vaults (old deposits still onchain).
-// Shape: { address, protocol } — only fields the withdraw flow needs.
+// The withdraw flow needs to inspect every vault that might still hold shares
+// for this pocket: the currently-committed vault (from DB), the top-APY
+// snapshot for the strategy (in case DB is out of date), and any legacy vaults.
+// Priority matters — the pocket's own vault_address comes FIRST so we always
+// redeem from the authoritative location before falling back.
 const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
   if (!props.pocket) return []
   const key = props.pocket.strategy_key as StrategyKey
+  const own = props.pocket.vault_address
+    ? [{
+        address: props.pocket.vault_address,
+        protocol: props.pocket.vault_protocol ?? '',
+      }]
+    : []
   const active = profileStore.lifiVaultAddresses[key] ?? []
   const legacy = (LEGACY_VAULTS[key] ?? []).map(v => ({ address: v.address, protocol: v.protocol }))
-  // Active first so withdraw picks current vault when shares exist there
   const merged: Array<{ address: string; protocol: string }> = [
+    ...own,
     ...active.map(a => ({ address: a.address, protocol: a.protocol })),
     ...legacy,
   ]
-  // Dedupe by address
+  // Dedupe by address (first occurrence wins → pocket vault stays at the top)
   const seen = new Set<string>()
   return merged.filter(a => {
     const k = a.address.toLowerCase()
@@ -375,6 +384,19 @@ async function executeWithdraw() {
         timestamp: Math.floor(Date.now() / 1000),
       }).catch((e: any) => console.warn('[withdraw] recordTransaction failed:', e))
     }
+
+    // Invalidate position cache immediately so the UI drops the stale balance
+    // while we wait for the onchain read. Refetch this pocket's balance right
+    // away — don't rely solely on the parent's @done handler, which runs a
+    // full multi-pocket refetch that can race with dialog close.
+    profileStore.pocketPositions[props.pocket.id] = { shares: 0n, value: 0n }
+    try {
+      await profileStore.fetchPocketPosition(props.pocket)
+    } catch (e) {
+      console.warn('[withdraw] post-tx position fetch failed:', e)
+    }
+    // Also refresh the pocket row (tx history + metadata)
+    await profileStore.refreshPockets().catch(() => {})
 
     withdrawStep.value = 'done'
     emit('done')

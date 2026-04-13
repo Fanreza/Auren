@@ -134,7 +134,17 @@ export const useProfileStore = defineStore('profile', () => {
     if (ok) {
       const idx = pockets.value.findIndex(p => p.id === id)
       if (idx !== -1) {
-        pockets.value[idx] = { ...pockets.value[idx], ...input } as typeof pockets.value[number]
+        const prev = pockets.value[idx]
+        pockets.value[idx] = { ...prev, ...input } as typeof pockets.value[number]
+        // If vault_address changed, the cached position reading points at the
+        // old vault and is now stale. Zero it out immediately so the UI doesn't
+        // keep showing phantom balance from the old vault after a migration.
+        // The next fetchPocketPosition call will repopulate from the new vault.
+        if (input.vault_address && input.vault_address !== prev?.vault_address) {
+          pocketPositions.value[id] = { shares: 0n, value: 0n }
+          // Refresh in background so UI catches up with onchain reality asap
+          fetchPocketPosition(pockets.value[idx]!).catch(() => {})
+        }
       }
     }
     return ok
@@ -428,9 +438,10 @@ export const useProfileStore = defineStore('profile', () => {
         fetchLifiPortfolio(userAddress),
         ...pockets.value.map(p => fetchPocketPosition(p)),
       ])
-      // Phase 1: reconciliation no longer needed — unique vault per pocket enforced at DB level.
-      // Safety net still runs for any legacy pockets that somehow share vaults.
-      await reconcileDuplicateStrategies()
+      // Phase 1: reconciliation disabled. Each pocket has its own vault_address
+      // (strict 1 pocket = 1 vault). The legacy reconcile assumes all pockets in
+      // the same strategy share a vault and overrides pocketPositions with
+      // ratio-split values — which corrupts freshly-fetched per-vault balances.
     } finally {
       loadingPositions.value = false
     }

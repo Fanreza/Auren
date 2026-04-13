@@ -81,6 +81,8 @@ async function loadExistingStrategy() {
 }
 
 onMounted(() => {
+  // Load user pockets so the picker can exclude vaults already committed to a pocket
+  profileStore.refreshPockets()
   if (isEditing.value) {
     loadExistingStrategy()
   } else {
@@ -113,9 +115,23 @@ const pickerAvailableAssets = computed(() => {
   return Array.from(set).sort()
 })
 
+// Vaults already locked into one of the user's existing pockets — exclude from picker
+// so a new custom strategy can't double-book a vault the user has committed funds to.
+const pocketVaultAddrs = computed(() => {
+  const set = new Set<string>()
+  for (const p of profileStore.pockets) {
+    if (p.vault_address) set.add(p.vault_address.toLowerCase())
+  }
+  return set
+})
+
 const availableVaults = computed(() => {
   const selectedAddrs = new Set(picks.value.map(p => p.vault.address.toLowerCase()))
-  let list = catalog.openVaults.filter(v => !selectedAddrs.has(v.address.toLowerCase()))
+  const blockedAddrs = pocketVaultAddrs.value
+  let list = catalog.openVaults.filter(v => {
+    const a = v.address.toLowerCase()
+    return !selectedAddrs.has(a) && !blockedAddrs.has(a)
+  })
   if (pickerAssetFilter.value !== 'all') {
     list = list.filter(v => v.assetSymbol === pickerAssetFilter.value)
   }

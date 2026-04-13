@@ -7,6 +7,7 @@ import { usePrivyAuth } from '~/composables/usePrivy'
 import { storeToRefs } from 'pinia'
 import { useProfileStore } from '~/stores/useProfileStore'
 import type { LifiAllocData } from '~/stores/useProfileStore'
+import { useVaultCatalog } from '~/composables/useVaultCatalog'
 import { useVault } from '~/composables/useVault'
 import { useCoinGecko } from '~/composables/useCoinGecko'
 import { useWalletTokens } from '~/composables/useWalletTokens'
@@ -21,8 +22,14 @@ const pocketId = route.params.id as string
 
 const { isConnected, isReady, address } = usePrivyAuth()
 const profileStore = useProfileStore()
+const vaultCatalog = useVaultCatalog()
 const { pockets, pocketPositions, loadingPositions } = storeToRefs(profileStore)
 const { getTransactions } = useUserData()
+
+onMounted(() => {
+  vaultCatalog.fetchCatalog()
+  vaultCatalog.fetchOpenCatalog()
+})
 
 // ---- Vault + wallet tokens (for deposit dialog) ----
 const { txState, txHash, txError, lifiDeposit, reset } = useVault()
@@ -73,8 +80,24 @@ const assetValue = computed(() => {
 const usdValue = computed(() => assetValue.value * assetPrice.value)
 
 // ---- Vault allocations ----
+// Prefer the pocket's own committed vault (from DB) over the strategy-level
+// snapshot. The global snapshot is only a fallback for legacy pockets written
+// before vault_address was persisted.
 const allocations = computed<LifiAllocData[]>(() => {
   if (!pocket.value) return []
+  if (pocket.value.vault_address) {
+    const catalogMatch = vaultCatalog.findByAddress(pocket.value.vault_address)
+    return [{
+      address: pocket.value.vault_address,
+      chainId: pocket.value.vault_chain_id ?? 8453,
+      assetSymbol: pocket.value.vault_asset ?? catalogMatch?.assetSymbol ?? '',
+      vaultSymbol: pocket.value.vault_symbol ?? catalogMatch?.name ?? '',
+      protocol: pocket.value.vault_protocol ?? catalogMatch?.protocol ?? '',
+      weight: 1,
+      apy: catalogMatch?.apy ?? 0,
+      tvl: catalogMatch?.tvl ?? 0,
+    }]
+  }
   return profileStore.lifiVaultAddresses[pocket.value.strategy_key] ?? []
 })
 
@@ -124,14 +147,18 @@ async function fetchHistory() {
 }
 
 // ---- Earnings ----
-// Tx amounts are stored as USD decimal (see useDashboardStats convention)
+// Tx amounts are stored as USD decimal (see useDashboardStats convention).
+// Principal = net contributed = deposits − (withdraws + redeems). A `switch`
+// transaction is a zero-sum vault migration (redeem → re-deposit into the same
+// pocket) and must not touch principal.
 const principal = computed(() => {
   let total = 0
   for (const tx of history.value) {
     const amt = parseFloat(tx.amount)
     if (isNaN(amt)) continue
     if (tx.type === 'deposit') total += amt
-    else total -= amt
+    else if (tx.type === 'withdraw' || tx.type === 'redeem') total -= amt
+    // tx.type === 'switch' → no-op, net zero
   }
   return Math.max(total, 0)
 })

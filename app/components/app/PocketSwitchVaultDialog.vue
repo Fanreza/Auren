@@ -133,6 +133,7 @@ const ERC20_ABI = parseAbi([
 const ERC4626_ABI = parseAbi([
   'function deposit(uint256 assets, address receiver) returns (uint256 shares)',
   'function redeem(uint256 shares, address receiver, address owner) returns (uint256 assets)',
+  'function previewRedeem(uint256 shares) view returns (uint256 assets)',
 ])
 
 async function executeSwitch() {
@@ -160,8 +161,37 @@ async function executeSwitch() {
       args: [address.value],
     })
 
+    // Empty pocket → no onchain migration needed. Just point the pocket row at
+    // the new vault in the DB and we're done. Saves the user a wasted tx and
+    // avoids the gas-reserve revert path entirely.
     if (shares === 0n) {
-      switchError.value = 'No shares to migrate from current vault'
+      await profileStore.updatePocket(props.pocket.id, {
+        vault_address: selectedVault.value.address,
+        vault_protocol: selectedVault.value.protocol,
+        vault_symbol: selectedVault.value.name,
+      }).catch((e) => {
+        console.warn('[switch-vault] failed to persist new vault on empty pocket:', e)
+      })
+      // Reload pocket row so the page reflects the new vault metadata
+      await profileStore.refreshPockets().catch(() => {})
+      switchStep.value = 'done'
+      emit('done')
+      setTimeout(() => { open.value = false }, 1500)
+      return
+    }
+
+    // Ask the vault exactly how much underlying our shares will return. This is
+    // authoritative and avoids any race with post-tx balance reads that can see
+    // stale state after waitForTransactionReceipt resolves.
+    const expectedAssets = await pub.readContract({
+      address: currentVault.value.address as `0x${string}`,
+      abi: ERC4626_ABI,
+      functionName: 'previewRedeem',
+      args: [shares],
+    })
+
+    if (expectedAssets === 0n) {
+      switchError.value = 'Vault reports 0 redeemable assets for current shares'
       switchStep.value = 'idle'
       return
     }
@@ -176,21 +206,15 @@ async function executeSwitch() {
       to: currentVault.value.address as `0x${string}`,
       data: redeemData,
     })
-    await pub.waitForTransactionReceipt({ hash: redeemHash })
-
-    // Step 3: Read underlying balance after redeem
-    const underlyingBal = await pub.readContract({
-      address: strategy.assetAddress,
-      abi: ERC20_ABI,
-      functionName: 'balanceOf',
-      args: [address.value],
-    })
-
-    if (underlyingBal === 0n) {
-      switchError.value = 'Redeem produced no underlying asset'
+    const redeemReceipt = await pub.waitForTransactionReceipt({ hash: redeemHash })
+    if (redeemReceipt.status !== 'success') {
+      switchError.value = 'Redeem transaction reverted'
       switchStep.value = 'idle'
       return
     }
+
+    // Use the preview value as the exact amount that was redeemed.
+    const depositAmount = expectedAssets
 
     // Step 4: Approve new vault if needed
     switchStep.value = 'depositing'
@@ -201,7 +225,7 @@ async function executeSwitch() {
       args: [address.value, selectedVault.value.address as `0x${string}`],
     })
 
-    if (allowance < underlyingBal) {
+    if (allowance < depositAmount) {
       const approveData = encodeFunctionData({
         abi: ERC20_ABI,
         functionName: 'approve',
@@ -214,11 +238,24 @@ async function executeSwitch() {
       await pub.waitForTransactionReceipt({ hash: approveHash })
     }
 
-    // Step 5: Deposit into new vault
+    // Persist the new vault address on the pocket row BEFORE the deposit tx.
+    // Approve already succeeded, so we are committed to the migration direction.
+    // If the deposit later fails, the DB still points at the new vault — on
+    // retry the UI and balance reads stay consistent, and the old vault (which
+    // is already empty after redeem) won't mislead the user.
+    await profileStore.updatePocket(props.pocket.id, {
+      vault_address: selectedVault.value.address,
+      vault_protocol: selectedVault.value.protocol,
+      vault_symbol: selectedVault.value.name,
+    }).catch((e) => {
+      console.warn('[switch-vault] failed to persist new vault on pocket:', e)
+    })
+
+    // Step 5: Deposit into new vault (minus gas reserve)
     const depositData = encodeFunctionData({
       abi: ERC4626_ABI,
       functionName: 'deposit',
-      args: [underlyingBal, address.value],
+      args: [depositAmount, address.value],
     })
     const depositHash = await client.sendTransaction({
       to: selectedVault.value.address as `0x${string}`,
@@ -242,6 +279,22 @@ async function executeSwitch() {
         tx_hash: lastHash,
         timestamp: Math.floor(Date.now() / 1000),
       }).catch(() => {})
+    }
+
+    // Invalidate the cached position (which was zeroed pre-deposit when we
+    // committed vault_address) and force a fresh read from the NEW vault now
+    // that the deposit has confirmed. Parent's @done handler runs a multi-
+    // pocket refetch that can race with dialog close — this in-place fetch
+    // makes sure the UI reflects the migrated balance immediately.
+    profileStore.pocketPositions[props.pocket.id] = { shares: 0n, value: 0n }
+    try {
+      // Reload the freshly-updated pocket row so fetchPocketPosition reads
+      // from the new vault_address we persisted earlier.
+      await profileStore.refreshPockets()
+      const updated = profileStore.pockets.find(p => p.id === props.pocket!.id)
+      if (updated) await profileStore.fetchPocketPosition(updated)
+    } catch (e) {
+      console.warn('[switch-vault] post-tx refetch failed:', e)
     }
 
     switchStep.value = 'done'

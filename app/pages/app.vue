@@ -94,10 +94,6 @@ const usedStrategyKeys = computed(() => {
 })
 
 function handleNewPocketClick() {
-  if (usedStrategyKeys.value.size >= STRATEGY_LIST.length) {
-    toast.info('You already have a pocket for every strategy. Multi-vault per strategy is still in development.')
-    return
-  }
   depositPocketKey.value = null
   newPocketStrategy.value = null
   showCreateDialog.value = true
@@ -542,7 +538,6 @@ const averageApy = computed(() => {
                 <Button
                   class="flex-1 h-11 rounded-2xl font-semibold"
                   data-tour="create-pocket"
-                  :disabled="usedStrategyKeys.size >= STRATEGY_LIST.length"
                   @click="handleNewPocketClick"
                 >
                   <Icon name="lucide:plus" class="w-4 h-4 mr-1.5" />

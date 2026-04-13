@@ -54,6 +54,11 @@ export interface UpdatePocketInput {
   recurring_day?: number | null
   recurring_amount?: string | null
   recurring_next_due?: string | null
+  vault_address?: string
+  vault_chain_id?: number
+  vault_protocol?: string
+  vault_symbol?: string
+  vault_asset?: string
 }
 
 export interface DbTransaction {

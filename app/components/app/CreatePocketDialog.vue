@@ -12,6 +12,7 @@ import { today, getLocalTimeZone } from '@internationalized/date'
 import type { DateValue } from '@internationalized/date'
 import { Popover, PopoverContent, PopoverTrigger } from '~/components/ui/popover'
 import { Calendar } from '~/components/ui/calendar'
+import { toast } from 'vue-sonner'
 
 const open = defineModel<boolean>('open', { required: true })
 
@@ -184,7 +185,7 @@ const amountError = computed(() => {
 
 const canDeposit = computed(() =>
   !!fromToken.value && !!amount.value && !amountError.value &&
-  parseFloat(amount.value) > 0 && strategyAllocs.value.length > 0,
+  parseFloat(amount.value) > 0 && !!selectedVault.value,
 )
 
 // USD display
@@ -341,6 +342,31 @@ watch(open, (v) => {
     // If pre-selecting strategy (from pocket "Add" button), jump to deposit step
     if (props.preSelectStrategy) {
       strategyKey.value = props.preSelectStrategy
+      // Find the existing pocket for this strategy and seed selectedVault from it.
+      // Without this, handleStartSaving silently returns at the !selectedVault guard
+      // and the Start Saving button looks like it does nothing.
+      const existing = profileStore.pockets.find(p => p.strategy_key === props.preSelectStrategy)
+      if (existing?.vault_address) {
+        const fromCatalog = vaultCatalog.findByAddress(existing.vault_address)
+        if (fromCatalog) {
+          selectedVault.value = fromCatalog
+        } else {
+          // Catalog not ready yet — build a minimal CatalogVault from DB fields so
+          // handleStartSaving has enough to emit the payload.
+          selectedVault.value = {
+            address: existing.vault_address,
+            chainId: existing.vault_chain_id ?? 8453,
+            name: existing.vault_symbol ?? '',
+            protocol: existing.vault_protocol ?? '',
+            vaultSymbol: existing.vault_symbol ?? '',
+            apy: 0,
+            tvl: 0,
+            assetSymbol: '',
+            assetAddress: existing.vault_asset ?? '',
+            strategyKey: props.preSelectStrategy,
+          }
+        }
+      }
       step.value = 3
     } else if (props.initialStrategy) {
       // Explorer card: pre-fill strategy but keep normal flow
@@ -403,7 +429,10 @@ function buildVaultPayload(): PocketVaultPayload | null {
 }
 
 function handleStartSaving() {
-  if (!strategyKey.value || !canDeposit.value || !fromToken.value || !selectedVault.value) return
+  if (!strategyKey.value) { toast.error('Pick a strategy first'); return }
+  if (!fromToken.value) { toast.error('Select a token to deposit from'); return }
+  if (!selectedVault.value) { toast.error('No vault selected for this pocket'); return }
+  if (!canDeposit.value) { toast.error(ctaLabel.value || 'Cannot deposit right now'); return }
 
   const addr = (fromToken.value.address === '0x0000000000000000000000000000000000000000'
     ? '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'

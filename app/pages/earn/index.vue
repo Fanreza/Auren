@@ -70,24 +70,22 @@ function getUserPosition(vault: EarnVault): number {
   return userPositionByAddress.value.get(vault.address.toLowerCase()) ?? 0
 }
 
+// Direct earn deposit — opens AppEarnDepositDialog inline. No pocket created.
+const showEarnDeposit = ref(false)
+const earnDepositVault = ref<EarnVault | null>(null)
+
 function handleDeposit(v: EarnVault) {
   if (!isConnected.value) {
     toast.info('Connect your wallet first')
     return
   }
-  // Route through the existing pocket create flow with the earn vault preselected.
-  // app.vue reads these query params on mount and opens CreatePocketDialog at step 3.
-  navigateTo({
-    path: '/app',
-    query: {
-      earn_vault: v.address,
-      earn_chain: String(v.chainId ?? 8453),
-      earn_protocol: v.protocol ?? '',
-      earn_symbol: v.name ?? '',
-      earn_asset_symbol: v.assetSymbol ?? '',
-      earn_asset_address: v.assetAddress ?? '',
-    },
-  })
+  earnDepositVault.value = v
+  showEarnDeposit.value = true
+}
+
+function onEarnDepositDone() {
+  // Refresh portfolio positions so the "Your positions" pill on the card updates
+  store.fetchPositions()
 }
 
 function resetFilters() {
@@ -291,9 +289,15 @@ const MIN_TVL_OPTIONS = [
       </div>
 
       <p class="text-[10px] text-muted-foreground/50 text-center mt-8">
-        Direct deposit flow is in preview. For now, create a pocket to use any of these vaults.
+        Direct vault deposits — gas paid in USDC, no pocket wrapper.
       </p>
     </main>
+
+    <AppEarnDepositDialog
+      v-model:open="showEarnDeposit"
+      :vault="earnDepositVault"
+      @done="onEarnDepositDone"
+    />
 
     <LandingFooter />
   </div>

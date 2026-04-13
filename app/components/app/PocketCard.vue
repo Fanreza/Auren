@@ -8,7 +8,7 @@ const { format: fmtCurrency } = useCurrency()
 
 const props = defineProps<{
   pocket: DbPocket
-  position: { shares: bigint; value: bigint }
+  position: { shares: bigint; value: bigint; usdValue?: number }
   assetPrice: number
   apy: string | null
   profit?: string | null
@@ -61,6 +61,16 @@ const PROGRESS_COLOR: Record<string, string> = {
 
 const config = computed(() => (STRATEGY_CONFIG[props.pocket.strategy_key] ?? STRATEGY_CONFIG.conservative) as NonNullable<typeof STRATEGY_CONFIG[string]>)
 const strategy = computed(() => STRATEGIES[props.pocket.strategy_key as StrategyKey])
+
+const vaultLabel = computed(() => {
+  const allocs = props.pocket.allocations ?? []
+  if (allocs.length > 1) {
+    const symbols = allocs.map(a => a.vault_symbol ?? a.asset_symbol ?? '?')
+    if (symbols.length <= 2) return symbols.join(' + ')
+    return `${allocs.length} vaults`
+  }
+  return props.pocket.vault_symbol ?? `${strategy.value?.assetSymbol ?? ''} vault`
+})
 
 const assetValue = computed(() => {
   if (!props.position || props.position.value === 0n || !strategy.value) return 0
@@ -177,7 +187,7 @@ function displayUsd(value: number): string {
             <Skeleton class="h-3.5 w-36 inline-block" />
           </template>
           <template v-else>
-            {{ pocket.target_amount ? `${displayUsd(usdValue)} of ${displayUsd(pocket.target_amount)}` : (pocket.vault_symbol ?? `${strategy?.assetSymbol} vault`) }}
+            {{ pocket.target_amount ? `${displayUsd(usdValue)} of ${displayUsd(pocket.target_amount)}` : vaultLabel }}
             <span v-if="timelineDisplay" class="ml-1.5" :class="timelineDisplay.urgent ? 'text-amber-400' : ''">
               · {{ timelineDisplay.label }}
             </span>

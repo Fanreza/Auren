@@ -23,11 +23,10 @@ const props = defineProps<{
   walletTokens: WalletToken[]
   loadingTokens: boolean
   userAddress?: `0x${string}`
-  preSelectStrategy?: StrategyKey | null
+  /** Phase 4: deposit into an existing pocket by ID. Loads its full multi-vault
+   *  allocation list and jumps to step 3. */
+  preSelectPocketId?: string | null
   initialStrategy?: StrategyKey | null  // Pre-fill strategy at step 1 without forcing deposit-only mode
-  /** Earn tab: preselect a specific vault and jump to step 3 (deposit).
-   *  Use for "Deposit" buttons on the Earn catalog cards. */
-  preSelectVault?: CatalogVault | null
 }>()
 
 export interface PocketVaultPayload {
@@ -330,7 +329,7 @@ const progressLabel = computed(() => {
 })
 
 // Deposit-only mode: skip pocket creation (existing pocket "Add" button)
-const isDepositOnly = computed(() => !!props.preSelectStrategy)
+const isDepositOnly = computed(() => !!props.preSelectPocketId)
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 function resetForm() {
@@ -356,52 +355,47 @@ watch(open, (v) => {
     const hasAny = Object.values(profileStore.lifiVaultAddresses).some((a: any) => a.length > 0)
     if (!hasAny) profileStore.fetchVaultSnapshots()
 
-    // Earn tab: preselect a specific vault and skip straight to deposit
-    if (props.preSelectVault) {
-      setSingleVault(props.preSelectVault)
-      strategyKey.value = props.preSelectVault.strategyKey
-      // Seed a sensible default name so user doesn't stare at a blank field
-      if (!name.value) name.value = `Earn · ${props.preSelectVault.vaultSymbol || props.preSelectVault.assetSymbol}`
-      step.value = 3
-    } else if (props.preSelectStrategy) {
-      strategyKey.value = props.preSelectStrategy
-      // Seed pickedAllocations from the existing pocket's allocations (Phase 4)
-      // or fall back to its primary vault_address.
-      const existing = profileStore.pockets.find(p => p.strategy_key === props.preSelectStrategy)
-      if (existing?.allocations?.length) {
-        const entries: PickedAllocation[] = []
-        for (const a of existing.allocations) {
-          const catalogVault = vaultCatalog.findByAddress(a.vault_address)
-          const v: CatalogVault = catalogVault ?? {
-            address: a.vault_address,
-            chainId: a.vault_chain_id ?? 8453,
-            name: a.vault_symbol ?? '',
-            protocol: a.protocol ?? '',
-            vaultSymbol: a.vault_symbol ?? '',
+    if (props.preSelectPocketId) {
+      // Phase 4: load THIS specific pocket by id (multiple pockets may share
+      // the same strategy_key, so a key-based lookup would be ambiguous).
+      const existing = profileStore.pockets.find(p => p.id === props.preSelectPocketId)
+      if (existing) {
+        strategyKey.value = existing.strategy_key as StrategyKey
+        if (existing.allocations?.length) {
+          const entries: PickedAllocation[] = []
+          for (const a of existing.allocations) {
+            const catalogVault = vaultCatalog.findByAddress(a.vault_address)
+            const v: CatalogVault = catalogVault ?? {
+              address: a.vault_address,
+              chainId: a.vault_chain_id ?? 8453,
+              name: a.vault_symbol ?? '',
+              protocol: a.protocol ?? '',
+              vaultSymbol: a.vault_symbol ?? '',
+              apy: 0,
+              tvl: 0,
+              assetSymbol: a.asset_symbol ?? '',
+              assetAddress: a.asset_address ?? '',
+              strategyKey: existing.strategy_key as StrategyKey,
+            }
+            entries.push({ vault: v, weight: a.weight })
+          }
+          pickedAllocations.value = entries
+        } else if (existing.vault_address) {
+          const fromCatalog = vaultCatalog.findByAddress(existing.vault_address)
+          const v: CatalogVault = fromCatalog ?? {
+            address: existing.vault_address,
+            chainId: existing.vault_chain_id ?? 8453,
+            name: existing.vault_symbol ?? '',
+            protocol: existing.vault_protocol ?? '',
+            vaultSymbol: existing.vault_symbol ?? '',
             apy: 0,
             tvl: 0,
-            assetSymbol: a.asset_symbol ?? '',
-            assetAddress: a.asset_address ?? '',
-            strategyKey: props.preSelectStrategy,
+            assetSymbol: '',
+            assetAddress: existing.vault_asset ?? '',
+            strategyKey: existing.strategy_key as StrategyKey,
           }
-          entries.push({ vault: v, weight: a.weight })
+          setSingleVault(v)
         }
-        pickedAllocations.value = entries
-      } else if (existing?.vault_address) {
-        const fromCatalog = vaultCatalog.findByAddress(existing.vault_address)
-        const v: CatalogVault = fromCatalog ?? {
-          address: existing.vault_address,
-          chainId: existing.vault_chain_id ?? 8453,
-          name: existing.vault_symbol ?? '',
-          protocol: existing.vault_protocol ?? '',
-          vaultSymbol: existing.vault_symbol ?? '',
-          apy: 0,
-          tvl: 0,
-          assetSymbol: '',
-          assetAddress: existing.vault_asset ?? '',
-          strategyKey: props.preSelectStrategy,
-        }
-        setSingleVault(v)
       }
       step.value = 3
     } else if (props.initialStrategy) {

@@ -34,7 +34,11 @@ export const useProfileStore = defineStore('profile', () => {
   const loading = ref(false)
 
   // ---- Cached position / market data (persists across navigations) ----
-  const pocketPositions = ref<Record<string, { shares: bigint; value: bigint }>>({})
+  // Phase 4: positions track BOTH the legacy single-asset shape (shares + value
+  // in the underlying asset's wei) AND a per-pocket USD total. usdValue is the
+  // authoritative number for multi-vault pockets where shares/value can't be
+  // summed in a single denomination.
+  const pocketPositions = ref<Record<string, { shares: bigint; value: bigint; usdValue: number }>>({})
   const assetPrices = ref<Record<string, number>>({})
   const vaultApys = ref<Record<string, string | null>>({})
   const vaultTvls = ref<Record<string, string | null>>({})
@@ -141,7 +145,7 @@ export const useProfileStore = defineStore('profile', () => {
         // keep showing phantom balance from the old vault after a migration.
         // The next fetchPocketPosition call will repopulate from the new vault.
         if (input.vault_address && input.vault_address !== prev?.vault_address) {
-          pocketPositions.value[id] = { shares: 0n, value: 0n }
+          pocketPositions.value[id] = { shares: 0n, value: 0n, usdValue: 0 }
           // Refresh in background so UI catches up with onchain reality asap
           fetchPocketPosition(pockets.value[idx]!).catch(() => {})
         }
@@ -180,6 +184,10 @@ export const useProfileStore = defineStore('profile', () => {
   const totalPortfolioUsd = computed(() => {
     return pockets.value.reduce((sum, pocket) => {
       const pos = pocketPositions.value[pocket.id]
+      // Phase 4: usdValue is per-allocation USD-summed, works for both single
+      // and multi-asset pockets. Falls back to legacy strategy-decimals math
+      // for pockets that haven't been refetched yet.
+      if (pos?.usdValue && pos.usdValue > 0) return sum + pos.usdValue
       if (!pos || pos.value === 0n) return sum
       const strategy = STRATEGIES[pocket.strategy_key as StrategyKey]
       if (!strategy) return sum
@@ -358,64 +366,150 @@ export const useProfileStore = defineStore('profile', () => {
   }
 
   /** Read onchain position for a pocket. Phase 4: pocket can own N vaults via
-   *  pocket_allocations. Sum balanceOf + convertToAssets across every allocation. */
+   *  pocket_allocations, possibly with mixed underlying assets (e.g. USDC+WETH).
+   *  We read each allocation independently, convert to USD using its own asset
+   *  price + decimals, and store the USD total. The legacy `value` bigint is
+   *  kept populated for the primary allocation so single-asset readers still
+   *  work without changes. */
   async function fetchPocketPosition(pocket: DbPocket) {
     const strategy = STRATEGIES[pocket.strategy_key as StrategyKey]
-    if (!strategy) return
-
     const { address: userAddr, getPublicClient } = usePrivyAuth()
     if (!userAddr.value) return
 
     try {
       const pub = getPublicClient()
-      const vaultAddrs: `0x${string}`[] = []
-      // Phase 4: prefer pocket_allocations (multi-vault)
+
+      // Build the list of (vault, asset, decimals) tuples to read from
+      type Alloc = { address: `0x${string}`; assetAddress: `0x${string}`; decimals: number }
+      const allocs: Alloc[] = []
+
+      // Look up an asset's decimals — try strategy table first, then ERC20 read
+      const assetDecimalsCache = new Map<string, number>()
+      async function getAssetDecimals(assetAddr: string): Promise<number> {
+        const lower = assetAddr.toLowerCase()
+        if (assetDecimalsCache.has(lower)) return assetDecimalsCache.get(lower)!
+        // Match against known strategy assets
+        for (const s of Object.values(STRATEGIES)) {
+          if (s.assetAddress.toLowerCase() === lower) {
+            assetDecimalsCache.set(lower, s.decimals)
+            return s.decimals
+          }
+        }
+        // Fallback: read from chain
+        try {
+          const dec = await pub.readContract({
+            address: assetAddr as `0x${string}`,
+            abi: [{ name: 'decimals', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] }],
+            functionName: 'decimals',
+          })
+          const d = Number(dec)
+          assetDecimalsCache.set(lower, d)
+          return d
+        } catch {
+          assetDecimalsCache.set(lower, 18)
+          return 18
+        }
+      }
+
       if (pocket.allocations?.length) {
         for (const a of pocket.allocations) {
-          vaultAddrs.push(a.vault_address as `0x${string}`)
+          if (!a.asset_address) continue
+          const dec = await getAssetDecimals(a.asset_address)
+          allocs.push({
+            address: a.vault_address as `0x${string}`,
+            assetAddress: a.asset_address as `0x${string}`,
+            decimals: dec,
+          })
         }
-      } else if (pocket.vault_address) {
-        // Phase 1 single-vault fallback
-        vaultAddrs.push(pocket.vault_address as `0x${string}`)
-      } else {
-        // Legacy pre-Phase-1 fallback — use current top snapshot
-        const allocs = lifiVaultAddresses.value[pocket.strategy_key] ?? []
-        for (const a of allocs) vaultAddrs.push(a.address as `0x${string}`)
+      } else if (pocket.vault_address && strategy) {
+        // Phase 1 fallback — single vault, asset comes from strategy
+        allocs.push({
+          address: pocket.vault_address as `0x${string}`,
+          assetAddress: strategy.assetAddress as `0x${string}`,
+          decimals: strategy.decimals,
+        })
+      } else if (strategy) {
+        // Pre-Phase-1 fallback — use top snapshot
+        const snapshot = lifiVaultAddresses.value[pocket.strategy_key] ?? []
+        for (const v of snapshot) {
+          allocs.push({
+            address: v.address as `0x${string}`,
+            assetAddress: strategy.assetAddress as `0x${string}`,
+            decimals: strategy.decimals,
+          })
+        }
       }
-      if (!vaultAddrs.length) vaultAddrs.push(strategy.vaultAddress)
 
-      // Read balanceOf + convertToAssets from each vault in parallel
-      const results = await Promise.all(
-        vaultAddrs.map(async (vaultAddr) => {
+      if (!allocs.length) {
+        pocketPositions.value[pocket.id] = { shares: 0n, value: 0n, usdValue: 0 }
+        return
+      }
+
+      // Read balanceOf + convertToAssets per allocation, convert each to USD.
+      const reads = await Promise.all(
+        allocs.map(async (alloc) => {
           try {
             const shares = await pub.readContract({
-              address: vaultAddr,
+              address: alloc.address,
               abi: [{ name: 'balanceOf', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'address' }], outputs: [{ type: 'uint256' }] }],
               functionName: 'balanceOf',
               args: [userAddr.value!],
             })
-            if (shares === 0n) return 0n
+            if (shares === 0n) return { shares: 0n, assets: 0n, alloc }
+            let assets: bigint
             try {
-              return await pub.readContract({
-                address: vaultAddr,
+              assets = await pub.readContract({
+                address: alloc.address,
                 abi: [{ name: 'convertToAssets', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'uint256' }], outputs: [{ type: 'uint256' }] }],
                 functionName: 'convertToAssets',
                 args: [shares],
               })
             } catch {
-              return shares // not ERC-4626, use raw balance
+              assets = shares // not ERC-4626 (Aave aToken etc) → raw balance is 1:1 underlying
             }
+            return { shares, assets, alloc }
           } catch {
-            return 0n
+            return { shares: 0n, assets: 0n, alloc }
           }
         }),
       )
 
-      const totalValue = results.reduce((sum, v) => sum + (v as bigint), 0n)
-      pocketPositions.value[pocket.id] = { shares: totalValue, value: totalValue }
+      // Sum USD across allocations using each asset's own price.
+      // Make sure the price for every needed asset is fetched (some assets like
+      // EURC may not be in STRATEGY_LIST and won't be in assetPrices yet).
+      const neededAssets = new Set<string>(reads.map(r => r.alloc.assetAddress.toLowerCase()))
+      const missing = Array.from(neededAssets).filter(a => !(a in assetPrices.value))
+      if (missing.length) {
+        try {
+          const extra = await getTokenPrices(missing)
+          assetPrices.value = { ...assetPrices.value, ...extra }
+        } catch (e) {
+          console.warn('[position] failed to fetch extra asset prices:', e)
+        }
+      }
+
+      let usdTotal = 0
+      for (const r of reads) {
+        if (r.assets === 0n) continue
+        const lower = r.alloc.assetAddress.toLowerCase()
+        const price = assetPrices.value[lower] ?? 0
+        if (price <= 0) continue
+        const tokens = parseFloat(formatUnits(r.assets, r.alloc.decimals))
+        usdTotal += tokens * price
+      }
+
+      // Legacy value bigint = sum of `assets` in the PRIMARY (heaviest) vault's
+      // denomination. Heuristic: use the first allocation. Single-asset readers
+      // still see a sane number; mixed-asset readers should use usdValue.
+      const primary = reads[0]
+      pocketPositions.value[pocket.id] = {
+        shares: primary?.shares ?? 0n,
+        value: primary?.assets ?? 0n,
+        usdValue: usdTotal,
+      }
     } catch (e) {
       console.error(`[position] ${pocket.name} fetch failed:`, e)
-      pocketPositions.value[pocket.id] = { shares: 0n, value: 0n }
+      pocketPositions.value[pocket.id] = { shares: 0n, value: 0n, usdValue: 0 }
     }
   }
 

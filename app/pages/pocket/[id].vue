@@ -68,7 +68,7 @@ const RISK_META: Record<string, { label: string; color: string; bg: string }> = 
 
 // ---- Position + price ----
 const position = computed(() =>
-  pocketPositions.value[pocketId] ?? { shares: 0n, value: 0n },
+  pocketPositions.value[pocketId] ?? { shares: 0n, value: 0n, usdValue: 0 },
 )
 const assetPrice = computed(() =>
   pocket.value ? profileStore.getAssetPrice(pocket.value.strategy_key) : 0,
@@ -77,7 +77,14 @@ const assetValue = computed(() => {
   if (position.value.value === 0n || !strategy.value) return 0
   return parseFloat(formatUnits(position.value.value, strategy.value.decimals))
 })
-const usdValue = computed(() => assetValue.value * assetPrice.value)
+// Phase 4: prefer the per-allocation USD total (correct for mixed-asset
+// multi-vault pockets). Falls back to the single-asset legacy formula for
+// pockets that haven't been refetched after the migration.
+const usdValue = computed(() => {
+  const usd = (position.value as any).usdValue as number | undefined
+  if (typeof usd === 'number' && usd > 0) return usd
+  return assetValue.value * assetPrice.value
+})
 
 // ---- Vault allocations ----
 // Phase 4: prefer pocket_allocations (joined from DB). Each pocket can have

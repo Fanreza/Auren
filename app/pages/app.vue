@@ -68,20 +68,15 @@ const { walletTokens, loadingTokens, fetchWalletTokens } = useWalletTokens(
 )
 
 // ---- Pocket actions ----
-// "Add" on pocket → open create dialog at step 3 with strategy pre-selected
-const depositPocketKey = ref<StrategyKey | null>(null)
+// "Add" on pocket → open create dialog at step 3 with this exact pocket loaded.
+// Phase 4: must use pocket.id, not strategy_key — multiple pockets can share a
+// strategy key now and lookup-by-key would pick the wrong row.
+const depositPocketId = ref<string | null>(null)
 // "Explore strategy" card → open create dialog at step 1 with strategy pre-filled
 const newPocketStrategy = ref<StrategyKey | null>(null)
 
 function handleExploreStrategy(key: StrategyKey) {
-  // Only 1 pocket per strategy for now — multi-vault per strategy is still WIP.
-  // If the user already has a pocket for this strategy, block creation and show why.
-  const existing = pockets.value.find(p => p.strategy_key === key)
-  if (existing) {
-    toast.info('Multi-vault per strategy is still in development. You already have a pocket for this strategy — use its "Add" button to deposit more.')
-    return
-  }
-  depositPocketKey.value = null
+  depositPocketId.value = null
   newPocketStrategy.value = key
   showCreateDialog.value = true
 }
@@ -94,7 +89,7 @@ const usedStrategyKeys = computed(() => {
 })
 
 function handleNewPocketClick() {
-  depositPocketKey.value = null
+  depositPocketId.value = null
   newPocketStrategy.value = null
   showCreateDialog.value = true
 }
@@ -111,7 +106,7 @@ function formatTvl(raw: string | null): string {
 }
 
 function handlePocketDeposit(pocket: DbPocket) {
-  depositPocketKey.value = pocket.strategy_key as StrategyKey
+  depositPocketId.value = pocket.id
   showCreateDialog.value = true
 }
 
@@ -167,44 +162,9 @@ useTransactionRecorder({
 const showCreateDialog = ref(false)
 const creatingPocket = ref(false)
 
-// Earn tab preselect: when user clicks Deposit on the Earn catalog, /earn
-// navigates here with query params describing the target vault. We build a
-// CatalogVault shape and forward it to CreatePocketDialog via preSelectVault,
-// which jumps straight to step 3 with the vault locked in.
-import type { CatalogVault } from '~/composables/useVaultCatalog'
-const earnPreselectVault = ref<CatalogVault | null>(null)
-
-const routeForEarn = useRoute()
-onMounted(() => {
-  const q = routeForEarn.query
-  if (q.earn_vault) {
-    earnPreselectVault.value = {
-      address: String(q.earn_vault),
-      chainId: Number(q.earn_chain ?? 8453),
-      name: String(q.earn_symbol ?? ''),
-      protocol: String(q.earn_protocol ?? ''),
-      vaultSymbol: String(q.earn_symbol ?? ''),
-      apy: 0,
-      tvl: 0,
-      assetSymbol: String(q.earn_asset_symbol ?? ''),
-      assetAddress: String(q.earn_asset_address ?? ''),
-      strategyKey: 'conservative',
-    }
-    showCreateDialog.value = true
-    // Strip the query from the URL so a refresh doesn't reopen the dialog
-    navigateTo({ path: '/app' }, { replace: true })
-  }
-})
-
 // Refetch when any dialog closes
 watch(showWithdrawDialog, (v) => { if (!v) refetchAll() })
-watch(showCreateDialog, (v) => {
-  if (!v) {
-    depositPocketKey.value = null
-    earnPreselectVault.value = null
-    refetchAll()
-  }
-})
+watch(showCreateDialog, (v) => { if (!v) { depositPocketId.value = null; refetchAll() } })
 
 interface PocketVaultPayload {
   vault_address: string
@@ -299,8 +259,8 @@ async function handleCreateAndDeposit(payload: {
   try {
     // If depositing to existing pocket (via "Add" button), skip creation
     let pocket: DbPocket | null = null
-    if (depositPocketKey.value) {
-      pocket = pockets.value.find(p => p.strategy_key === depositPocketKey.value) ?? null
+    if (depositPocketId.value) {
+      pocket = pockets.value.find(p => p.id === depositPocketId.value) ?? null
     }
     if (!pocket) {
       // Derive allocation rows from the deposit payload.allocations (weights come
@@ -903,9 +863,8 @@ const averageApy = computed(() => {
         :wallet-tokens="walletTokens"
         :loading-tokens="loadingTokens"
         :user-address="address"
-        :pre-select-strategy="depositPocketKey"
+        :pre-select-pocket-id="depositPocketId"
         :initial-strategy="newPocketStrategy"
-        :pre-select-vault="earnPreselectVault"
         @create="handleCreatePocket"
         @create-and-deposit="handleCreateAndDeposit"
         @fetch-tokens="fetchWalletTokens"

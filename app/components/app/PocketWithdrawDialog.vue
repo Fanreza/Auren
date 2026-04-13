@@ -24,34 +24,41 @@ const strategy = computed(() =>
   props.pocket ? STRATEGIES[props.pocket.strategy_key as StrategyKey] : null,
 )
 
-// Phase 4: withdraw flow inspects every vault the pocket holds shares in.
-// Order of precedence:
-//   1. pocket_allocations (multi-vault) — authoritative
-//   2. pocket.vault_address (Phase 1 single-vault cache)
-//   3. Strategy top-APY snapshot (legacy fallback)
-//   4. Hardcoded LEGACY_VAULTS (really old deposits)
+// Phase 4: STRICT — withdraw only touches vaults that belong to THIS pocket.
+//   1. If pocket has explicit allocations → use those, ignore everything else.
+//   2. Else if pocket has vault_address (Phase 1 single-vault) → use that only.
+//   3. Else fall back to legacy snapshot/LEGACY_VAULTS for pre-Phase-1 pockets.
+//
+// Falling back to the global strategy snapshot would pull in vaults that other
+// pockets own (multiple pockets can share a strategy_key now), so withdraw
+// would read cross-pocket balances and let the user redeem someone else's funds.
 const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
   if (!props.pocket) return []
+
+  // Phase 4 — explicit per-pocket allocations are authoritative
+  if (props.pocket.allocations?.length) {
+    return props.pocket.allocations.map(a => ({
+      address: a.vault_address,
+      protocol: a.protocol ?? '',
+    }))
+  }
+
+  // Phase 1 — single-vault cache column
+  if (props.pocket.vault_address) {
+    return [{
+      address: props.pocket.vault_address,
+      protocol: props.pocket.vault_protocol ?? '',
+    }]
+  }
+
+  // Pre-Phase-1 legacy fallback (very old pockets) — strategy snapshot + hardcoded
   const key = props.pocket.strategy_key as StrategyKey
-  const fromAllocations = (props.pocket.allocations ?? []).map(a => ({
-    address: a.vault_address,
-    protocol: a.protocol ?? '',
-  }))
-  const own = props.pocket.vault_address
-    ? [{
-        address: props.pocket.vault_address,
-        protocol: props.pocket.vault_protocol ?? '',
-      }]
-    : []
   const active = profileStore.lifiVaultAddresses[key] ?? []
   const legacy = (LEGACY_VAULTS[key] ?? []).map(v => ({ address: v.address, protocol: v.protocol }))
   const merged: Array<{ address: string; protocol: string }> = [
-    ...fromAllocations,
-    ...own,
     ...active.map(a => ({ address: a.address, protocol: a.protocol })),
     ...legacy,
   ]
-  // Dedupe by address (first occurrence wins → pocket allocations stay at top)
   const seen = new Set<string>()
   return merged.filter(a => {
     const k = a.address.toLowerCase()

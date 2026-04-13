@@ -167,9 +167,44 @@ useTransactionRecorder({
 const showCreateDialog = ref(false)
 const creatingPocket = ref(false)
 
+// Earn tab preselect: when user clicks Deposit on the Earn catalog, /earn
+// navigates here with query params describing the target vault. We build a
+// CatalogVault shape and forward it to CreatePocketDialog via preSelectVault,
+// which jumps straight to step 3 with the vault locked in.
+import type { CatalogVault } from '~/composables/useVaultCatalog'
+const earnPreselectVault = ref<CatalogVault | null>(null)
+
+const routeForEarn = useRoute()
+onMounted(() => {
+  const q = routeForEarn.query
+  if (q.earn_vault) {
+    earnPreselectVault.value = {
+      address: String(q.earn_vault),
+      chainId: Number(q.earn_chain ?? 8453),
+      name: String(q.earn_symbol ?? ''),
+      protocol: String(q.earn_protocol ?? ''),
+      vaultSymbol: String(q.earn_symbol ?? ''),
+      apy: 0,
+      tvl: 0,
+      assetSymbol: String(q.earn_asset_symbol ?? ''),
+      assetAddress: String(q.earn_asset_address ?? ''),
+      strategyKey: 'conservative',
+    }
+    showCreateDialog.value = true
+    // Strip the query from the URL so a refresh doesn't reopen the dialog
+    navigateTo({ path: '/app' }, { replace: true })
+  }
+})
+
 // Refetch when any dialog closes
 watch(showWithdrawDialog, (v) => { if (!v) refetchAll() })
-watch(showCreateDialog, (v) => { if (!v) { depositPocketKey.value = null; refetchAll() } })
+watch(showCreateDialog, (v) => {
+  if (!v) {
+    depositPocketKey.value = null
+    earnPreselectVault.value = null
+    refetchAll()
+  }
+})
 
 interface PocketVaultPayload {
   vault_address: string
@@ -186,10 +221,32 @@ async function handleCreatePocket(payload: {
   timeline?: string
   strategy_key: StrategyKey
   vault: PocketVaultPayload
+  allocations?: Array<{
+    vault_address: string
+    vault_chain_id: number
+    protocol: string
+    vault_symbol: string
+    asset_symbol: string
+    asset_address: string
+    weight: number
+    display_order: number
+  }>
 }) {
   if (!currentUser.value) return
   creatingPocket.value = true
   try {
+    // Fallback: if no allocations passed, build a single-entry allocation from
+    // the primary vault so the DB row always has at least one pocket_allocations entry.
+    const allocations = payload.allocations ?? [{
+      vault_address: payload.vault.vault_address,
+      vault_chain_id: payload.vault.vault_chain_id,
+      protocol: payload.vault.vault_protocol,
+      vault_symbol: payload.vault.vault_symbol,
+      asset_symbol: '',
+      asset_address: payload.vault.vault_asset,
+      weight: 1,
+      display_order: 0,
+    }]
     const pocket = await profileStore.createPocket({
       user_id: currentUser.value.id,
       name: payload.name,
@@ -202,6 +259,7 @@ async function handleCreatePocket(payload: {
       vault_protocol: payload.vault.vault_protocol,
       vault_symbol: payload.vault.vault_symbol,
       vault_asset: payload.vault.vault_asset,
+      allocations,
     })
     if (pocket) {
       showCreateDialog.value = false
@@ -245,6 +303,18 @@ async function handleCreateAndDeposit(payload: {
       pocket = pockets.value.find(p => p.strategy_key === depositPocketKey.value) ?? null
     }
     if (!pocket) {
+      // Derive allocation rows from the deposit payload.allocations (weights come
+      // from pickedAllocations in the dialog, matching whatever strategy was picked).
+      const pocketAllocations = payload.allocations.map((a, i) => ({
+        vault_address: a.vaultAddress,
+        vault_chain_id: a.vaultChainId,
+        protocol: a.protocol,
+        vault_symbol: (a as any).vaultSymbol ?? '',
+        asset_symbol: a.assetSymbol,
+        asset_address: (a as any).assetAddress ?? payload.vault.vault_asset,
+        weight: a.weight,
+        display_order: (a as any).displayOrder ?? i,
+      }))
       pocket = await profileStore.createPocket({
         user_id: currentUser.value.id,
         name: payload.name,
@@ -257,6 +327,7 @@ async function handleCreateAndDeposit(payload: {
         vault_protocol: payload.vault.vault_protocol,
         vault_symbol: payload.vault.vault_symbol,
         vault_asset: payload.vault.vault_asset,
+        allocations: pocketAllocations,
       })
     }
     if (!pocket) {
@@ -834,6 +905,7 @@ const averageApy = computed(() => {
         :user-address="address"
         :pre-select-strategy="depositPocketKey"
         :initial-strategy="newPocketStrategy"
+        :pre-select-vault="earnPreselectVault"
         @create="handleCreatePocket"
         @create-and-deposit="handleCreateAndDeposit"
         @fetch-tokens="fetchWalletTokens"

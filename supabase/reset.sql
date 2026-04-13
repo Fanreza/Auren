@@ -1,6 +1,7 @@
 -- Auren full reset — wipes all data + drops tables, then run schema.sql + migrations 001/002/003 after this.
 -- Paste into Supabase SQL Editor: https://supabase.com/dashboard/project/vdzyatbsiqowandthzmf/sql/new
 
+drop table if exists public.pocket_allocations cascade;
 drop table if exists public.strategy_followers cascade;
 drop table if exists public.strategy_allocations cascade;
 drop table if exists public.strategies cascade;

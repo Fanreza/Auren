@@ -71,7 +71,23 @@ function getUserPosition(vault: EarnVault): number {
 }
 
 function handleDeposit(v: EarnVault) {
-  toast.info(`Direct deposit to ${v.name} coming soon. Create a pocket to start earning today.`)
+  if (!isConnected.value) {
+    toast.info('Connect your wallet first')
+    return
+  }
+  // Route through the existing pocket create flow with the earn vault preselected.
+  // app.vue reads these query params on mount and opens CreatePocketDialog at step 3.
+  navigateTo({
+    path: '/app',
+    query: {
+      earn_vault: v.address,
+      earn_chain: String(v.chainId ?? 8453),
+      earn_protocol: v.protocol ?? '',
+      earn_symbol: v.name ?? '',
+      earn_asset_symbol: v.assetSymbol ?? '',
+      earn_asset_address: v.assetAddress ?? '',
+    },
+  })
 }
 
 function resetFilters() {

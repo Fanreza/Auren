@@ -24,14 +24,19 @@ const strategy = computed(() =>
   props.pocket ? STRATEGIES[props.pocket.strategy_key as StrategyKey] : null,
 )
 
-// The withdraw flow needs to inspect every vault that might still hold shares
-// for this pocket: the currently-committed vault (from DB), the top-APY
-// snapshot for the strategy (in case DB is out of date), and any legacy vaults.
-// Priority matters — the pocket's own vault_address comes FIRST so we always
-// redeem from the authoritative location before falling back.
+// Phase 4: withdraw flow inspects every vault the pocket holds shares in.
+// Order of precedence:
+//   1. pocket_allocations (multi-vault) — authoritative
+//   2. pocket.vault_address (Phase 1 single-vault cache)
+//   3. Strategy top-APY snapshot (legacy fallback)
+//   4. Hardcoded LEGACY_VAULTS (really old deposits)
 const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
   if (!props.pocket) return []
   const key = props.pocket.strategy_key as StrategyKey
+  const fromAllocations = (props.pocket.allocations ?? []).map(a => ({
+    address: a.vault_address,
+    protocol: a.protocol ?? '',
+  }))
   const own = props.pocket.vault_address
     ? [{
         address: props.pocket.vault_address,
@@ -41,11 +46,12 @@ const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
   const active = profileStore.lifiVaultAddresses[key] ?? []
   const legacy = (LEGACY_VAULTS[key] ?? []).map(v => ({ address: v.address, protocol: v.protocol }))
   const merged: Array<{ address: string; protocol: string }> = [
+    ...fromAllocations,
     ...own,
     ...active.map(a => ({ address: a.address, protocol: a.protocol })),
     ...legacy,
   ]
-  // Dedupe by address (first occurrence wins → pocket vault stays at the top)
+  // Dedupe by address (first occurrence wins → pocket allocations stay at top)
   const seen = new Set<string>()
   return merged.filter(a => {
     const k = a.address.toLowerCase()

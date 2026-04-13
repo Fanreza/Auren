@@ -321,7 +321,12 @@ async function estimateGasReserve() {
 
 const maxWithdrawable = computed(() => {
   const bal = parseFloat(smartBalance.value ?? '0')
-  return Math.max(bal - gasReserveUsdc.value, 0)
+  // Double the gas reserve as a safety margin. Pimlico's pm_getPaymasterData
+  // estimate can come back lower than the actual post-op cost (variance in
+  // exchangeRate and maxFeePerGas between estimate time and sign time), so a
+  // naive max leaves the paymaster short and reverts with AA50.
+  const reserve = gasReserveUsdc.value * 2
+  return Math.max(bal - reserve, 0)
 })
 
 const withdrawDest = computed(() => {

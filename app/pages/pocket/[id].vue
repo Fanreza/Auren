@@ -80,11 +80,26 @@ const assetValue = computed(() => {
 const usdValue = computed(() => assetValue.value * assetPrice.value)
 
 // ---- Vault allocations ----
-// Prefer the pocket's own committed vault (from DB) over the strategy-level
-// snapshot. The global snapshot is only a fallback for legacy pockets written
-// before vault_address was persisted.
+// Phase 4: prefer pocket_allocations (joined from DB). Each pocket can have
+// N vaults with explicit weights. Fall back to the Phase 1 single-vault
+// cache column, then to the legacy strategy-level snapshot.
 const allocations = computed<LifiAllocData[]>(() => {
   if (!pocket.value) return []
+  if (pocket.value.allocations?.length) {
+    return pocket.value.allocations.map((a) => {
+      const catalogMatch = vaultCatalog.findByAddress(a.vault_address)
+      return {
+        address: a.vault_address,
+        chainId: a.vault_chain_id ?? 8453,
+        assetSymbol: a.asset_symbol ?? catalogMatch?.assetSymbol ?? '',
+        vaultSymbol: a.vault_symbol ?? catalogMatch?.name ?? '',
+        protocol: a.protocol ?? catalogMatch?.protocol ?? '',
+        weight: a.weight,
+        apy: catalogMatch?.apy ?? 0,
+        tvl: catalogMatch?.tvl ?? 0,
+      }
+    })
+  }
   if (pocket.value.vault_address) {
     const catalogMatch = vaultCatalog.findByAddress(pocket.value.vault_address)
     return [{
@@ -673,6 +688,7 @@ watch([isConnected, isReady], ([connected, ready]) => {
               </Button>
             </div>
             <Button
+              v-if="(pocket?.allocations?.length ?? 1) <= 1"
               variant="ghost"
               size="sm"
               class="w-full h-9 rounded-xl mt-2 text-xs text-muted-foreground hover:text-foreground"

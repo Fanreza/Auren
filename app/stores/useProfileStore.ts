@@ -357,8 +357,8 @@ export const useProfileStore = defineStore('profile', () => {
     )
   }
 
-  /** Read onchain position for a pocket. Post-Phase-1: pocket has explicit
-   *  vault_address, so we read balance from that specific vault only. */
+  /** Read onchain position for a pocket. Phase 4: pocket can own N vaults via
+   *  pocket_allocations. Sum balanceOf + convertToAssets across every allocation. */
   async function fetchPocketPosition(pocket: DbPocket) {
     const strategy = STRATEGIES[pocket.strategy_key as StrategyKey]
     if (!strategy) return
@@ -368,12 +368,17 @@ export const useProfileStore = defineStore('profile', () => {
 
     try {
       const pub = getPublicClient()
-      // Phase 1: pocket owns exactly one vault
       const vaultAddrs: `0x${string}`[] = []
-      if (pocket.vault_address) {
+      // Phase 4: prefer pocket_allocations (multi-vault)
+      if (pocket.allocations?.length) {
+        for (const a of pocket.allocations) {
+          vaultAddrs.push(a.vault_address as `0x${string}`)
+        }
+      } else if (pocket.vault_address) {
+        // Phase 1 single-vault fallback
         vaultAddrs.push(pocket.vault_address as `0x${string}`)
       } else {
-        // Fallback for legacy pockets without vault_address — use current top snapshot
+        // Legacy pre-Phase-1 fallback — use current top snapshot
         const allocs = lifiVaultAddresses.value[pocket.strategy_key] ?? []
         for (const a of allocs) vaultAddrs.push(a.address as `0x${string}`)
       }

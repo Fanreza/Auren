@@ -25,6 +25,9 @@ const props = defineProps<{
   userAddress?: `0x${string}`
   preSelectStrategy?: StrategyKey | null
   initialStrategy?: StrategyKey | null  // Pre-fill strategy at step 1 without forcing deposit-only mode
+  /** Earn tab: preselect a specific vault and jump to step 3 (deposit).
+   *  Use for "Deposit" buttons on the Earn catalog cards. */
+  preSelectVault?: CatalogVault | null
 }>()
 
 export interface PocketVaultPayload {
@@ -86,8 +89,22 @@ const step = ref(1) // 1=name 2=vault 3=deposit 4=progress
 const name = ref('')
 const purpose = ref('')
 const strategyKey = ref<StrategyKey | null>(null)
-/** Selected vault for deposit (post-Phase-1: 1 vault per pocket) */
-const selectedVault = ref<CatalogVault | null>(null)
+/** Phase 4: a pocket can hold N vaults. Source of truth for the pick step. */
+interface PickedAllocation {
+  vault: CatalogVault
+  weight: number // 0..1, must sum to 1 across the list
+}
+const pickedAllocations = ref<PickedAllocation[]>([])
+/** Primary vault = highest-weighted allocation. Used for display chrome and
+ *  the `vault_*` cache columns on the pocket row. */
+const selectedVault = computed<CatalogVault | null>(() => {
+  if (!pickedAllocations.value.length) return null
+  const primary = [...pickedAllocations.value].sort((a, b) => b.weight - a.weight)[0]
+  return primary?.vault ?? null
+})
+function setSingleVault(v: CatalogVault | null) {
+  pickedAllocations.value = v ? [{ vault: v, weight: 1 }] : []
+}
 /** Step 2 mode: preset (top-APY per strategy) vs custom (browse all vaults) vs my (my strategies) */
 const vaultPickMode = ref<'preset' | 'custom' | 'my'>('preset')
 /** Currently expanded strategy (when user clicks a multi-vault strategy in "my" mode) */
@@ -324,7 +341,7 @@ function resetForm() {
   timeline.value = undefined
   showDatePicker.value = false
   strategyKey.value = null
-  selectedVault.value = null
+  pickedAllocations.value = []
   vaultPickMode.value = 'preset'
   fromToken.value = null
   amount.value = ''
@@ -339,33 +356,52 @@ watch(open, (v) => {
     const hasAny = Object.values(profileStore.lifiVaultAddresses).some((a: any) => a.length > 0)
     if (!hasAny) profileStore.fetchVaultSnapshots()
 
-    // If pre-selecting strategy (from pocket "Add" button), jump to deposit step
-    if (props.preSelectStrategy) {
+    // Earn tab: preselect a specific vault and skip straight to deposit
+    if (props.preSelectVault) {
+      setSingleVault(props.preSelectVault)
+      strategyKey.value = props.preSelectVault.strategyKey
+      // Seed a sensible default name so user doesn't stare at a blank field
+      if (!name.value) name.value = `Earn · ${props.preSelectVault.vaultSymbol || props.preSelectVault.assetSymbol}`
+      step.value = 3
+    } else if (props.preSelectStrategy) {
       strategyKey.value = props.preSelectStrategy
-      // Find the existing pocket for this strategy and seed selectedVault from it.
-      // Without this, handleStartSaving silently returns at the !selectedVault guard
-      // and the Start Saving button looks like it does nothing.
+      // Seed pickedAllocations from the existing pocket's allocations (Phase 4)
+      // or fall back to its primary vault_address.
       const existing = profileStore.pockets.find(p => p.strategy_key === props.preSelectStrategy)
-      if (existing?.vault_address) {
-        const fromCatalog = vaultCatalog.findByAddress(existing.vault_address)
-        if (fromCatalog) {
-          selectedVault.value = fromCatalog
-        } else {
-          // Catalog not ready yet — build a minimal CatalogVault from DB fields so
-          // handleStartSaving has enough to emit the payload.
-          selectedVault.value = {
-            address: existing.vault_address,
-            chainId: existing.vault_chain_id ?? 8453,
-            name: existing.vault_symbol ?? '',
-            protocol: existing.vault_protocol ?? '',
-            vaultSymbol: existing.vault_symbol ?? '',
+      if (existing?.allocations?.length) {
+        const entries: PickedAllocation[] = []
+        for (const a of existing.allocations) {
+          const catalogVault = vaultCatalog.findByAddress(a.vault_address)
+          const v: CatalogVault = catalogVault ?? {
+            address: a.vault_address,
+            chainId: a.vault_chain_id ?? 8453,
+            name: a.vault_symbol ?? '',
+            protocol: a.protocol ?? '',
+            vaultSymbol: a.vault_symbol ?? '',
             apy: 0,
             tvl: 0,
-            assetSymbol: '',
-            assetAddress: existing.vault_asset ?? '',
+            assetSymbol: a.asset_symbol ?? '',
+            assetAddress: a.asset_address ?? '',
             strategyKey: props.preSelectStrategy,
           }
+          entries.push({ vault: v, weight: a.weight })
         }
+        pickedAllocations.value = entries
+      } else if (existing?.vault_address) {
+        const fromCatalog = vaultCatalog.findByAddress(existing.vault_address)
+        const v: CatalogVault = fromCatalog ?? {
+          address: existing.vault_address,
+          chainId: existing.vault_chain_id ?? 8453,
+          name: existing.vault_symbol ?? '',
+          protocol: existing.vault_protocol ?? '',
+          vaultSymbol: existing.vault_symbol ?? '',
+          apy: 0,
+          tvl: 0,
+          assetSymbol: '',
+          assetAddress: existing.vault_asset ?? '',
+          strategyKey: props.preSelectStrategy,
+        }
+        setSingleVault(v)
       }
       step.value = 3
     } else if (props.initialStrategy) {
@@ -384,33 +420,46 @@ function handleTokenSelected(t: PickedToken) {
 }
 
 /**
- * Pick a vault from a user-saved strategy. If the strategy has exactly 1
- * allocation, select it directly. If multiple, expand the card and let user
- * pick which specific vault (required because 1 pocket = 1 vault strict).
+ * Phase 4: Pick a user-saved strategy — copy ALL its allocations into the
+ * pocket. Multi-vault strategies flow through as multi-vault pockets with
+ * the same weights. No forced single-vault pick.
  */
 function handleStrategyPick(strategy: StrategyWithAllocations) {
-  if (strategy.allocations.length === 1) {
-    const alloc = strategy.allocations[0]!
-    const vault = vaultCatalog.findByAddress(alloc.vault_address)
-    if (vault) {
-      selectedVault.value = vault
-      strategyKey.value = vault.strategyKey
-      expandedStrategyId.value = null
-    } else {
-      // Vault not in catalog (maybe non-Composer or removed) — show inline warning
-      expandedStrategyId.value = strategy.id
+  if (!strategy.allocations.length) return
+
+  const entries: PickedAllocation[] = []
+  for (const alloc of strategy.allocations) {
+    const fromCatalog = vaultCatalog.findByAddress(alloc.vault_address)
+    const v: CatalogVault = fromCatalog ?? {
+      address: alloc.vault_address,
+      chainId: alloc.vault_chain_id ?? 8453,
+      name: alloc.vault_symbol ?? '',
+      protocol: alloc.protocol ?? '',
+      vaultSymbol: alloc.vault_symbol ?? '',
+      apy: 0,
+      tvl: 0,
+      assetSymbol: alloc.asset_symbol ?? '',
+      assetAddress: alloc.asset_address ?? '',
+      // Fallback strategy key — doesn't really matter for multi-vault pockets
+      // since the display key is taken from the heaviest allocation below.
+      strategyKey: (fromCatalog?.strategyKey ?? 'conservative') as StrategyKey,
     }
-  } else {
-    // Multi-vault strategy — expand to let user pick which vault to use
-    expandedStrategyId.value = expandedStrategyId.value === strategy.id ? null : strategy.id
+    entries.push({ vault: v, weight: alloc.weight })
   }
+
+  pickedAllocations.value = entries
+  // Use the primary (heaviest) allocation's strategy key for display/category
+  const primary = [...entries].sort((a, b) => b.weight - a.weight)[0]
+  if (primary) strategyKey.value = primary.vault.strategyKey
+  expandedStrategyId.value = null
 }
 
-/** Pick a specific vault from an expanded multi-vault strategy */
+/** Legacy helper retained for template compat — picks a single vault from an
+ *  expanded strategy card. No longer wired in the main flow. */
 function handleStrategyVaultPick(vaultAddress: string) {
   const vault = vaultCatalog.findByAddress(vaultAddress)
   if (vault) {
-    selectedVault.value = vault
+    setSingleVault(vault)
     strategyKey.value = vault.strategyKey
     expandedStrategyId.value = null
   }
@@ -431,7 +480,7 @@ function buildVaultPayload(): PocketVaultPayload | null {
 function handleStartSaving() {
   if (!strategyKey.value) { toast.error('Pick a strategy first'); return }
   if (!fromToken.value) { toast.error('Select a token to deposit from'); return }
-  if (!selectedVault.value) { toast.error('No vault selected for this pocket'); return }
+  if (!pickedAllocations.value.length) { toast.error('No vault selected for this pocket'); return }
   if (!canDeposit.value) { toast.error(ctaLabel.value || 'Cannot deposit right now'); return }
 
   const addr = (fromToken.value.address === '0x0000000000000000000000000000000000000000'
@@ -441,6 +490,21 @@ function handleStartSaving() {
   const total = parseFloat(amount.value)
   step.value = 4
   const vaultPayload = buildVaultPayload()!
+
+  // Phase 4: split the total deposit across allocations by weight.
+  // Each allocation gets its own LI.FI Composer quote downstream.
+  const allocations = pickedAllocations.value.map((p, i) => ({
+    vaultAddress: p.vault.address,
+    vaultChainId: p.vault.chainId,
+    assetSymbol: p.vault.assetSymbol,
+    assetAddress: p.vault.assetAddress,
+    protocol: p.vault.protocol,
+    vaultSymbol: p.vault.vaultSymbol,
+    weight: p.weight,
+    amount: (total * p.weight).toString(),
+    displayOrder: i,
+    quote: quotes.value[i] ?? null,
+  }))
 
   const payload = {
     name: name.value.trim() || `Pocket ${new Date().toLocaleDateString()}`,
@@ -454,23 +518,14 @@ function handleStartSaving() {
     fromTokenSymbol: fromToken.value.symbol,
     fromTokenDecimals: fromToken.value.decimals,
     totalAmount: amount.value,
-    // Single allocation now — 1 pocket = 1 vault
-    allocations: [{
-      vaultAddress: selectedVault.value.address,
-      vaultChainId: selectedVault.value.chainId,
-      assetSymbol: selectedVault.value.assetSymbol,
-      protocol: selectedVault.value.protocol,
-      weight: 1,
-      amount: total.toString(),
-      quote: quotes.value[0] ?? null,
-    }],
+    allocations,
   }
 
   emit('create-and-deposit', payload)
 }
 
 function handleCreateEmpty() {
-  if (!strategyKey.value || !selectedVault.value) return
+  if (!strategyKey.value || !pickedAllocations.value.length) return
   depositSkipped.value = true
   step.value = 4
   emit('create', {
@@ -480,6 +535,16 @@ function handleCreateEmpty() {
     timeline: timeline.value ? timeline.value.toString() : undefined,
     strategy_key: strategyKey.value,
     vault: buildVaultPayload()!,
+    allocations: pickedAllocations.value.map((p, i) => ({
+      vault_address: p.vault.address,
+      vault_chain_id: p.vault.chainId,
+      protocol: p.vault.protocol,
+      vault_symbol: p.vault.vaultSymbol,
+      asset_symbol: p.vault.assetSymbol,
+      asset_address: p.vault.assetAddress,
+      weight: p.weight,
+      display_order: i,
+    })),
   })
 }
 
@@ -656,7 +721,7 @@ const ctaLabel = computed(() => {
             class="w-full rounded-xl border-2 p-4 text-left transition-all relative disabled:opacity-40 disabled:cursor-not-allowed"
             :class="selectedVault?.strategyKey === s.key ? 'border-primary bg-primary/5' : 'border-border hover:border-border/80'"
             :disabled="!vaultCatalog.topForStrategy(s.key) || usedVaultAddresses.includes(vaultCatalog.topForStrategy(s.key)!.address)"
-            @click="() => { const top = vaultCatalog.topForStrategy(s.key); if (top) { selectedVault = top; strategyKey = s.key; } }"
+            @click="() => { const top = vaultCatalog.topForStrategy(s.key); if (top) { setSingleVault(top); strategyKey = s.key; } }"
           >
             <span
               v-if="STRATEGY_META[s.key].popular"
@@ -774,26 +839,20 @@ const ctaLabel = computed(() => {
                 />
               </div>
 
-              <!-- Expanded sub-picker (for multi-vault strategies) -->
+              <!-- Expanded allocation preview (multi-vault) — read-only breakdown.
+                   Clicking the parent card already picks ALL vaults with their
+                   original weights; this just surfaces what's inside. -->
               <div
                 v-if="expandedStrategyId === s.id && s.allocations.length > 1"
                 class="mt-3 pt-3 border-t border-border/30 space-y-1.5"
                 @click.stop
               >
                 <p class="text-[10px] text-muted-foreground/70 uppercase tracking-wider mb-1">
-                  Pick which vault to use (1 pocket = 1 vault)
+                  Vaults in this strategy
                 </p>
-                <button
+                <div
                   v-for="alloc in s.allocations" :key="alloc.id"
-                  type="button"
-                  class="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors"
-                  :class="selectedVault?.address.toLowerCase() === alloc.vault_address.toLowerCase()
-                    ? 'border-primary bg-primary/10'
-                    : usedVaultAddresses.map(a => a.toLowerCase()).includes(alloc.vault_address.toLowerCase())
-                      ? 'border-border/30 bg-muted/20 opacity-50 cursor-not-allowed'
-                      : 'border-border/60 hover:border-primary/40'"
-                  :disabled="usedVaultAddresses.map(a => a.toLowerCase()).includes(alloc.vault_address.toLowerCase())"
-                  @click="handleStrategyVaultPick(alloc.vault_address)"
+                  class="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border border-border/60 bg-muted/20"
                 >
                   <div class="flex-1 min-w-0 text-left">
                     <p class="text-xs font-semibold truncate">{{ alloc.vault_symbol ?? alloc.asset_symbol }}</p>
@@ -801,22 +860,18 @@ const ctaLabel = computed(() => {
                       {{ alloc.protocol ?? 'Unknown' }} · {{ (alloc.weight * 100).toFixed(0) }}% of strategy
                     </p>
                   </div>
-                  <span
-                    v-if="usedVaultAddresses.map(a => a.toLowerCase()).includes(alloc.vault_address.toLowerCase())"
-                    class="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0"
-                  >In use</span>
-                </button>
+                </div>
               </div>
             </button>
           </template>
         </div>
 
-        <!-- Custom mode: full vault picker -->
+        <!-- Custom mode: full vault picker (always writes a single allocation) -->
         <AppVaultPicker
           v-else
-          v-model="selectedVault"
+          :model-value="selectedVault"
           :disabled-addresses="usedVaultAddresses"
-          @update:model-value="(v) => { if (v) strategyKey = v.strategyKey }"
+          @update:model-value="(v) => { setSingleVault(v); if (v) strategyKey = v.strategyKey }"
         />
 
         <div class="flex gap-3 mt-5">

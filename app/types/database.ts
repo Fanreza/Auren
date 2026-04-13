@@ -9,6 +9,19 @@ export interface DbUser {
   updated_at: string
 }
 
+export interface DbPocketAllocation {
+  id: string
+  pocket_id: string
+  vault_address: string
+  vault_chain_id: number
+  protocol: string | null
+  vault_symbol: string | null
+  asset_symbol: string | null
+  asset_address: string | null
+  weight: number
+  display_order: number
+}
+
 export interface DbPocket {
   id: string
   user_id: string
@@ -16,9 +29,10 @@ export interface DbPocket {
   purpose: string | null
   timeline: string | null
   target_amount: number | null
-  /** Display category for icon/color/grouping. Actual deposit target = vault_address. */
+  /** Display category for icon/color/grouping. Actual deposit targets live in `allocations`. */
   strategy_key: string
-  /** Vault address this pocket deposits into (1 vault = 1 pocket, unique per user). */
+  /** Primary vault (highest weight) — kept as a cache column for quick dashboard reads.
+   *  Authoritative deposit targets live in `allocations`. */
   vault_address: string | null
   vault_chain_id: number | null
   vault_protocol: string | null
@@ -29,6 +43,20 @@ export interface DbPocket {
   recurring_next_due: string | null
   created_at: string
   updated_at: string
+  /** Multi-vault allocations — hydrated via join from pocket_allocations.
+   *  Always present on pockets fetched via GET /api/pockets. */
+  allocations?: DbPocketAllocation[]
+}
+
+export interface PocketAllocationInput {
+  vault_address: string
+  vault_chain_id: number
+  protocol: string
+  vault_symbol: string
+  asset_symbol: string
+  asset_address: string
+  weight: number
+  display_order: number
 }
 
 export interface CreatePocketInput {
@@ -38,11 +66,15 @@ export interface CreatePocketInput {
   timeline?: string
   target_amount?: number
   strategy_key: string
+  /** Primary/cache vault fields — typically the highest-weighted allocation. */
   vault_address: string
   vault_chain_id: number
   vault_protocol: string
   vault_symbol: string
   vault_asset: string
+  /** Full allocation list — what gets written to pocket_allocations.
+   *  Must sum weights to 1.0. For single-vault pockets, pass one entry with weight=1. */
+  allocations: PocketAllocationInput[]
 }
 
 export interface UpdatePocketInput {

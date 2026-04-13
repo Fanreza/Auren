@@ -16,7 +16,11 @@ import { useApyDriftAlert } from '~/composables/useApyDriftAlert'
 import { useNotifications } from '~/composables/useNotifications'
 import { storeToRefs } from 'pinia'
 import { useProfileStore } from '~/stores/useProfileStore'
+import { useCurrency } from '~/composables/useCurrency'
 import { toast } from 'vue-sonner'
+
+// ---- Currency localization (applies to every USD value rendered on this page) ----
+const { format: fmtCurrency } = useCurrency()
 
 // ---- Wallet ----
 const { isConnected, address, isReady, logout } = usePrivyAuth()
@@ -407,9 +411,7 @@ const totalWalletUsd = computed(() =>
     .filter(t => !vaultAddresses.has(t.token.toLowerCase()))
     .reduce((sum, t) => sum + t.usdValue, 0),
 )
-const totalWalletFormatted = computed(() =>
-  totalWalletUsd.value.toLocaleString('en-US', { style: 'currency', currency: 'USD' }),
-)
+const totalWalletFormatted = computed(() => fmtCurrency(totalWalletUsd.value))
 
 // Refetch wallet tokens when address changes (EOA → smart account)
 // Only fetch once smart account is ready (skip EOA intermediate state)
@@ -448,7 +450,13 @@ const totalPortfolioUsd = computed(() => {
   let total = 0
   for (const pocket of pockets.value) {
     const pos = pocketPositions.value[pocket.id]
-    if (!pos || pos.value === 0n) continue
+    if (!pos) continue
+    // Phase 4: usdValue is per-allocation USD-summed, correct for multi-vault.
+    if ((pos as any).usdValue && (pos as any).usdValue > 0) {
+      total += (pos as any).usdValue
+      continue
+    }
+    if (pos.value === 0n) continue
     const strategy = STRATEGIES[pocket.strategy_key as StrategyKey]
     if (!strategy) continue
     const val = parseFloat(formatUnits(pos.value, strategy.decimals))
@@ -571,7 +579,7 @@ const averageApy = computed(() => {
               <p class="text-xs text-muted-foreground uppercase tracking-widest mb-3 font-medium">Total saved</p>
               <Skeleton v-if="loadingPositions" class="h-12 w-44 mb-2" />
               <h1 v-else class="text-5xl font-bold tracking-tight tabular-nums leading-none mb-2">
-                {{ totalPortfolioFormatted }}
+                {{ fmtCurrency(totalPortfolioUsd) }}
               </h1>
               <p class="text-sm text-muted-foreground">
                 {{ pocketCount }} pocket{{ pocketCount !== 1 ? 's' : '' }}

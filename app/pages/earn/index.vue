@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useEarnStore, type EarnVault } from '~/composables/useEarnStore'
+import { useEarnStore, type EarnVault, type EarnPosition } from '~/composables/useEarnStore'
 import { useProfileStore } from '~/stores/useProfileStore'
 import { usePrivyAuth } from '~/composables/usePrivy'
 import { useCurrency } from '~/composables/useCurrency'
@@ -84,8 +84,28 @@ function handleDeposit(v: EarnVault) {
 }
 
 function onEarnDepositDone() {
-  // Refresh portfolio positions so the "Your positions" pill on the card updates
+  // Onchain reads — fast and authoritative. One refetch is enough; we re-poll
+  // briefly because the RPC can return stale state immediately after a UserOp.
   store.fetchPositions()
+  setTimeout(() => store.fetchPositions(), 2500)
+}
+
+// ── Withdraw ──────────────────────────────────────────────────────────────
+const showEarnWithdraw = ref(false)
+const earnWithdrawPosition = ref<EarnPosition | null>(null)
+
+function handleWithdraw(pos: EarnPosition) {
+  if (!isConnected.value) {
+    toast.info('Connect your wallet first')
+    return
+  }
+  earnWithdrawPosition.value = pos
+  showEarnWithdraw.value = true
+}
+
+function onEarnWithdrawDone() {
+  store.fetchPositions()
+  setTimeout(() => store.fetchPositions(), 2500)
 }
 
 function resetFilters() {
@@ -126,10 +146,39 @@ const MIN_TVL_OPTIONS = [
             Browse every yield vault from LI.FI. Deposit directly — no goal, no wrapper.
           </p>
         </div>
-        <div v-if="store.totalPositionsUsd > 0" class="text-right">
-          <p class="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Your positions</p>
-          <p class="text-xl font-bold tabular-nums">{{ fmtCurrency(store.totalPositionsUsd) }}</p>
-          <p class="text-[10px] text-muted-foreground/60">{{ store.positions.length }} vaults</p>
+        <div v-if="isConnected" class="rounded-2xl bg-muted/30 border border-border/50 px-4 py-3 min-w-55">
+          <div class="flex items-center justify-between mb-1.5 gap-3">
+            <p class="text-[10px] text-muted-foreground/60 uppercase tracking-wider">Your positions</p>
+            <button
+              class="text-[10px] text-muted-foreground/60 hover:text-primary inline-flex items-center gap-1"
+              :disabled="store.loadingPositions"
+              @click="store.fetchPositions()"
+            >
+              <Icon
+                name="lucide:refresh-cw"
+                class="w-3 h-3"
+                :class="store.loadingPositions ? 'animate-spin' : ''"
+              />
+              {{ store.loadingPositions ? 'Refreshing…' : 'Refresh' }}
+            </button>
+          </div>
+          <p class="text-xl font-bold tabular-nums">
+            {{ store.totalPositionsUsd > 0 ? fmtCurrency(store.totalPositionsUsd) : '$0.00' }}
+          </p>
+          <div class="flex items-center justify-between mt-1 gap-2">
+            <p class="text-[10px] text-muted-foreground/60">
+              {{ store.positions.length }} {{ store.positions.length === 1 ? 'vault' : 'vaults' }}
+            </p>
+            <a
+              v-if="profileStore.currentUser?.address"
+              :href="`https://basescan.org/address/${profileStore.currentUser.address}#tokentxns`"
+              target="_blank"
+              rel="noopener"
+              class="text-[10px] text-primary/70 hover:text-primary inline-flex items-center gap-1"
+            >
+              Basescan <Icon name="lucide:external-link" class="w-2.5 h-2.5" />
+            </a>
+          </div>
         </div>
       </div>
 
@@ -221,21 +270,63 @@ const MIN_TVL_OPTIONS = [
         </div>
       </div>
 
-      <!-- User earn positions (compact row) -->
-      <div v-if="store.positions.length" class="mb-6">
-        <h2 class="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider mb-3">
-          Your earn positions ({{ store.positions.length }})
-        </h2>
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-          <div
-            v-for="(pos, i) in store.positions" :key="i"
-            class="rounded-xl border border-primary/30 bg-primary/5 p-3"
+      <!-- User earn positions — list rows with Withdraw button -->
+      <div v-if="store.positions.length" class="mb-8">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">
+            Your earn positions ({{ store.positions.length }})
+          </h2>
+          <button
+            class="text-[10px] text-muted-foreground/60 hover:text-primary inline-flex items-center gap-1"
+            :disabled="store.loadingPositions"
+            @click="store.fetchPositions()"
           >
-            <p class="text-xs font-bold truncate">{{ pos?.vault?.name ?? '—' }}</p>
-            <p class="text-[10px] text-muted-foreground/70 truncate mb-2">{{ pos?.vault?.protocol ?? '' }}</p>
-            <div class="flex items-baseline justify-between">
-              <p class="text-sm font-bold tabular-nums">{{ fmtCurrency(pos?.assetsValue ?? 0) }}</p>
-              <p class="text-[10px] text-primary">{{ ((pos?.vault?.apy ?? 0) * 100).toFixed(1) }}%</p>
+            <Icon name="lucide:refresh-cw" class="w-3 h-3" :class="store.loadingPositions ? 'animate-spin' : ''" />
+            Refresh
+          </button>
+        </div>
+        <div class="rounded-2xl border border-border/60 bg-muted/10 divide-y divide-border/40 overflow-hidden">
+          <div
+            v-for="pos in store.positions" :key="pos.vault.address"
+            class="flex items-center gap-3 px-4 py-3 hover:bg-muted/20 transition-colors"
+          >
+            <AppVaultLogos
+              :asset-address="pos.vault.assetAddress"
+              :asset-symbol="pos.vault.assetSymbol"
+              :protocol="pos.vault.protocol"
+              size="md"
+            />
+            <div class="flex-1 min-w-0">
+              <div class="flex items-baseline gap-2">
+                <p class="text-sm font-bold truncate">{{ pos.vault.name }}</p>
+                <span class="text-[10px] text-primary shrink-0">{{ (pos.vault.apy * 100).toFixed(2) }}% APY</span>
+              </div>
+              <p class="text-[11px] text-muted-foreground/70 truncate">
+                {{ pos.vault.protocol }} · {{ pos.assetsAmount.toLocaleString('en-US', { maximumFractionDigits: 6 }) }} {{ pos.vault.assetSymbol }}
+              </p>
+            </div>
+            <div class="text-right shrink-0">
+              <p class="text-sm font-bold tabular-nums">{{ fmtCurrency(pos.usdValue) }}</p>
+              <p class="text-[10px] text-muted-foreground/60">value</p>
+            </div>
+            <div class="flex gap-1.5 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                class="h-8 px-3 text-xs"
+                @click="handleDeposit(pos.vault)"
+              >
+                <Icon name="lucide:plus" class="w-3 h-3 mr-1" />
+                Add
+              </Button>
+              <Button
+                size="sm"
+                class="h-8 px-3 text-xs"
+                @click="handleWithdraw(pos)"
+              >
+                <Icon name="lucide:arrow-up" class="w-3 h-3 mr-1" />
+                Withdraw
+              </Button>
             </div>
           </div>
         </div>
@@ -297,6 +388,12 @@ const MIN_TVL_OPTIONS = [
       v-model:open="showEarnDeposit"
       :vault="earnDepositVault"
       @done="onEarnDepositDone"
+    />
+
+    <AppEarnWithdrawDialog
+      v-model:open="showEarnWithdraw"
+      :position="earnWithdrawPosition"
+      @done="onEarnWithdrawDone"
     />
 
     <LandingFooter />

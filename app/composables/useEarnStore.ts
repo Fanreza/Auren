@@ -8,8 +8,10 @@
  * Phase 4 will extend this to multi-chain. For now Base only.
  */
 import { defineStore } from 'pinia'
-import { useLifi, type LifiVault, type LifiPosition } from '~/composables/useLifi'
+import { formatUnits, parseAbi } from 'viem'
+import { useLifi, type LifiVault } from '~/composables/useLifi'
 import { usePrivyAuth } from '~/composables/usePrivy'
+import { useCoinGecko } from '~/composables/useCoinGecko'
 
 export interface EarnVault {
   address: string
@@ -57,15 +59,28 @@ const CHAIN_NAMES: Record<number, string> = {
 // Phase 4a: Base only. Phase 4d will expand to all chains in parallel.
 const ENABLED_CHAINS = [8453]
 
+/** A user-held earn position, computed from onchain reads (NOT LI.FI Portfolio API). */
+export interface EarnPosition {
+  vault: EarnVault
+  /** Vault share token balance (raw bigint, vault decimals) */
+  shares: bigint
+  /** Underlying asset amount the shares would redeem to (raw bigint, asset decimals) */
+  assetsRaw: bigint
+  /** Human-readable asset amount */
+  assetsAmount: number
+  /** USD value at current asset price */
+  usdValue: number
+}
+
 export const useEarnStore = defineStore('earn', () => {
   const vaults = ref<EarnVault[]>([])
-  const positions = ref<LifiPosition[]>([])
+  const positions = ref<EarnPosition[]>([])
   const loadingVaults = ref(false)
   const loadingPositions = ref(false)
   const lastFetchedAt = ref<number | null>(null)
 
-  const { getPortfolioPositions } = useLifi()
-  const { address } = usePrivyAuth()
+  const { address, getPublicClient } = usePrivyAuth()
+  const { getTokenPrices } = useCoinGecko()
 
   // ── Fetch catalog ────────────────────────────────────────────────────────
   async function fetchVaults(force = false) {
@@ -139,24 +154,90 @@ export const useEarnStore = defineStore('earn', () => {
     }
   }
 
-  // ── Fetch user positions (LI.FI Portfolio API) ───────────────────────────
+  // ── Fetch user positions (onchain — bypass LI.FI Portfolio API) ──────────
+  // Scans every vault in the catalog with balanceOf(user). Positions with shares
+  // get convertToAssets called and the underlying value is converted to USD via
+  // the asset's CoinGecko price. Multicall batches the RPC reads automatically
+  // because the public client has `batch.multicall` enabled.
   async function fetchPositions() {
     if (!address.value) return
+    if (!vaults.value.length) {
+      // Catalog must be loaded first — otherwise we have nothing to scan
+      await fetchVaults()
+    }
     loadingPositions.value = true
     try {
-      const raw = await getPortfolioPositions(address.value)
-      // Defensive: LI.FI sometimes returns placeholder entries with 0 USD value
-      // and no vault metadata. Only keep positions with actual balance + valid vault.
-      positions.value = Array.isArray(raw)
-        ? raw.filter((p): p is LifiPosition => {
-            if (!p || typeof p !== 'object') return false
-            const usd = p.assetsValue ?? 0
-            if (usd <= 0) return false
-            const vaultAddr = p.vault?.address ?? (p as any).address
-            if (!vaultAddr) return false
-            return true
-          })
-        : []
+      const pub = getPublicClient()
+      const userAddr = address.value
+      const ERC4626_ABI = parseAbi([
+        'function balanceOf(address) view returns (uint256)',
+        'function convertToAssets(uint256) view returns (uint256)',
+      ])
+
+      // Step 1: read balanceOf for every vault in parallel (auto-batched into multicall)
+      const balances = await Promise.all(
+        vaults.value.map(async (v) => {
+          try {
+            const shares = await pub.readContract({
+              address: v.address as `0x${string}`,
+              abi: ERC4626_ABI,
+              functionName: 'balanceOf',
+              args: [userAddr],
+            })
+            return { vault: v, shares }
+          } catch {
+            return { vault: v, shares: 0n }
+          }
+        }),
+      )
+
+      // Step 2: filter out empty positions, then convertToAssets for the rest
+      const held = balances.filter(b => b.shares > 0n)
+      if (!held.length) {
+        positions.value = []
+        return
+      }
+
+      const withAssets = await Promise.all(
+        held.map(async (b) => {
+          let assetsRaw: bigint
+          try {
+            assetsRaw = await pub.readContract({
+              address: b.vault.address as `0x${string}`,
+              abi: ERC4626_ABI,
+              functionName: 'convertToAssets',
+              args: [b.shares],
+            })
+          } catch {
+            // Non-ERC-4626 (e.g. Aave aTokens) — share balance == underlying 1:1
+            assetsRaw = b.shares
+          }
+          return { ...b, assetsRaw }
+        }),
+      )
+
+      // Step 3: get prices for every unique asset address (CoinGecko)
+      const uniqueAssetAddrs = Array.from(new Set(
+        withAssets.map(p => p.vault.assetAddress.toLowerCase()).filter(Boolean),
+      ))
+      let prices: Record<string, number> = {}
+      try {
+        prices = await getTokenPrices(uniqueAssetAddrs)
+      } catch (e) {
+        console.warn('[earn] price fetch failed', e)
+      }
+
+      positions.value = withAssets.map((p) => {
+        const assetsAmount = parseFloat(formatUnits(p.assetsRaw, p.vault.assetDecimals))
+        const price = prices[p.vault.assetAddress.toLowerCase()] ?? 0
+        return {
+          vault: p.vault,
+          shares: p.shares,
+          assetsRaw: p.assetsRaw,
+          assetsAmount,
+          usdValue: assetsAmount * price,
+        }
+      }).sort((a, b) => b.usdValue - a.usdValue)
     } catch (e) {
       console.warn('[earn] fetchPositions failed', e)
       positions.value = []
@@ -167,7 +248,7 @@ export const useEarnStore = defineStore('earn', () => {
 
   // ── Filters + derived state ──────────────────────────────────────────────
   const totalPositionsUsd = computed(() =>
-    positions.value.reduce((s, p) => s + (p.assetsValue ?? 0), 0),
+    positions.value.reduce((s, p) => s + p.usdValue, 0),
   )
 
   const uniqueAssets = computed(() => {

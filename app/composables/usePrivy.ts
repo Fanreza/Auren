@@ -229,6 +229,10 @@ export function usePrivyAuth() {
   // Used for raw EOA txns (e.g. "Transfer In" from EOA to smart account) that should
   // NOT go through the smart-account paymaster path. For embedded wallets, returns
   // the wrapped provider to work around Privy's `gas` vs `gasLimit` bug.
+  //
+  // NOTE: This does NOT switch chains. Callers must call `ensureChain(chainId)`
+  // themselves with the specific chain the transaction targets — Auren supports
+  // multi-chain deposits (LI.FI Composer), so there's no single "correct" chain.
   async function getEoaProvider(): Promise<EIP1193Provider | any> {
     if (_externalProvider) return _externalProvider
     if (_embeddedProvider) return wrapProvider(_embeddedProvider)
@@ -298,39 +302,98 @@ export function usePrivyAuth() {
     return _walletClient
   }
 
-  // ---- Auto-switch to Base chain ----
-  async function ensureBaseChain() {
-    if (!_externalProvider) return // Embedded wallets are always on Base
+  // ---- Chain-add metadata for auto wallet_addEthereumChain fallback ─────────
+  // If the target chain isn't already in the user's wallet, we auto-add it
+  // using these params. Chain IDs covered mirror LIFI_SUPPORTED_CHAINS.
+  const CHAIN_METADATA: Record<number, {
+    chainName: string
+    nativeCurrency: { name: string; symbol: string; decimals: number }
+    rpcUrls: string[]
+    blockExplorerUrls: string[]
+  }> = {
+    1: {
+      chainName: 'Ethereum',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://eth.llamarpc.com'],
+      blockExplorerUrls: ['https://etherscan.io'],
+    },
+    8453: {
+      chainName: 'Base',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://mainnet.base.org'],
+      blockExplorerUrls: ['https://basescan.org'],
+    },
+    42161: {
+      chainName: 'Arbitrum One',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://arb1.arbitrum.io/rpc'],
+      blockExplorerUrls: ['https://arbiscan.io'],
+    },
+    10: {
+      chainName: 'OP Mainnet',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: ['https://mainnet.optimism.io'],
+      blockExplorerUrls: ['https://optimistic.etherscan.io'],
+    },
+    137: {
+      chainName: 'Polygon',
+      nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+      rpcUrls: ['https://polygon-rpc.com'],
+      blockExplorerUrls: ['https://polygonscan.com'],
+    },
+    56: {
+      chainName: 'BNB Smart Chain',
+      nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
+      rpcUrls: ['https://bsc-dataseed.binance.org'],
+      blockExplorerUrls: ['https://bscscan.com'],
+    },
+    43114: {
+      chainName: 'Avalanche C-Chain',
+      nativeCurrency: { name: 'AVAX', symbol: 'AVAX', decimals: 18 },
+      rpcUrls: ['https://api.avax.network/ext/bc/C/rpc'],
+      blockExplorerUrls: ['https://snowtrace.io'],
+    },
+  }
 
+  // ---- Generic chain-switch for external wallets ─────────────────────────
+  // Auren is multi-chain: deposits can originate from any LI.FI-supported
+  // chain. Callers pass the chainId their operation needs (e.g. the source
+  // chain of the user-picked token). Embedded wallets are always on Base so
+  // this is a no-op for them.
+  async function ensureChain(chainId: number): Promise<void> {
+    if (!_externalProvider) return // Embedded wallet — always Base
     try {
-      const currentChainId = await _externalProvider.request({ method: 'eth_chainId' })
-      if (parseInt(currentChainId, 16) === 8453) return // Already on Base
+      const currentHex = await _externalProvider.request({ method: 'eth_chainId' })
+      if (parseInt(currentHex, 16) === chainId) return // Already there
 
+      const hexId = '0x' + chainId.toString(16)
       try {
         await _externalProvider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: '0x2105' }], // 8453 in hex
+          params: [{ chainId: hexId }],
         })
       } catch (switchError: any) {
-        // Chain not added — add it first
+        // Chain not added — add it first, then switch again
         if (switchError?.code === 4902) {
+          const meta = CHAIN_METADATA[chainId]
+          if (!meta) throw new Error(`Unknown chain ${chainId}`)
           await _externalProvider.request({
             method: 'wallet_addEthereumChain',
-            params: [{
-              chainId: '0x2105',
-              chainName: 'Base',
-              nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-              rpcUrls: ['https://mainnet.base.org'],
-              blockExplorerUrls: ['https://basescan.org'],
-            }],
+            params: [{ chainId: hexId, ...meta }],
           })
         } else {
           throw switchError
         }
       }
     } catch (e) {
-      console.warn('[usePrivy] ensureBaseChain failed:', e)
+      console.warn(`[usePrivy] ensureChain(${chainId}) failed:`, e)
     }
+  }
+
+  // Back-compat: auto-switch to Base for legacy callers (used by getWalletClient
+  // which defaults the smart account client to Base).
+  async function ensureBaseChain() {
+    return ensureChain(8453)
   }
 
   // ---- Farcaster mini app ----
@@ -738,6 +801,8 @@ export function usePrivyAuth() {
     getPublicClient,
     getWalletClient,
     getEoaProvider,
+    ensureBaseChain,
+    ensureChain,
 
     // Auth
     sendEmailCode,

@@ -17,7 +17,7 @@ const props = defineProps<{
   defaultTab?: 'transfer' | 'buy' | 'withdraw' | 'swap'
 }>()
 
-const { eoaWalletAddress, getPublicClient, getWalletClient, getEoaProvider } = usePrivyAuth()
+const { eoaWalletAddress, getPublicClient, getWalletClient, getEoaProvider, ensureChain } = usePrivyAuth()
 
 const copied = ref(false)
 const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as const
@@ -147,6 +147,12 @@ async function executeTransfer() {
   try {
     const provider = await getEoaProvider().catch(() => null)
     if (!provider) { transferError.value = 'No wallet provider'; return }
+
+    // Multi-chain: switch the external wallet to the source token's chain
+    // BEFORE signing. Without this, wallets like Rabby/MetaMask try to
+    // simulate the tx on whatever chain they're currently on (often Ethereum
+    // mainnet) and return a 500 when the contract address doesn't exist there.
+    await ensureChain(fromToken.value.chainId)
 
     const token = fromToken.value
     const amtStr = String(amount.value)

@@ -77,7 +77,12 @@ const assetValue = computed(() => {
   return parseFloat(formatUnits(props.position.value, strategy.value.decimals))
 })
 
-const usdValue = computed(() => assetValue.value * props.assetPrice)
+// Prefer the store's pre-computed usdValue (sums across all allocations using
+// each asset's own price). Falls back to single-vault math for legacy positions.
+const usdValue = computed(() => {
+  if (typeof props.position?.usdValue === 'number') return props.position.usdValue
+  return assetValue.value * props.assetPrice
+})
 
 const progressRaw = computed(() => {
   if (!props.pocket.target_amount || props.pocket.target_amount === 0) return 0

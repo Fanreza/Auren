@@ -24,15 +24,23 @@ const strategy = computed(() =>
   props.pocket ? STRATEGIES[props.pocket.strategy_key as StrategyKey] : null,
 )
 
+// Per-allocation metadata — withdraw works on ONE allocation at a time so
+// mixed-asset multi-vault pockets (e.g. USDC + WETH) display correct balances
+// and execute against the right vault/asset.
+interface WithdrawAlloc {
+  address: string
+  protocol: string
+  assetAddress: string
+  assetSymbol: string
+  vaultSymbol: string
+  decimals: number
+}
+
 // Phase 4: STRICT — withdraw only touches vaults that belong to THIS pocket.
 //   1. If pocket has explicit allocations → use those, ignore everything else.
 //   2. Else if pocket has vault_address (Phase 1 single-vault) → use that only.
 //   3. Else fall back to legacy snapshot/LEGACY_VAULTS for pre-Phase-1 pockets.
-//
-// Falling back to the global strategy snapshot would pull in vaults that other
-// pockets own (multiple pockets can share a strategy_key now), so withdraw
-// would read cross-pocket balances and let the user redeem someone else's funds.
-const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
+const allocs = computed<WithdrawAlloc[]>(() => {
   if (!props.pocket) return []
 
   // Phase 4 — explicit per-pocket allocations are authoritative
@@ -40,6 +48,10 @@ const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
     return props.pocket.allocations.map(a => ({
       address: a.vault_address,
       protocol: a.protocol ?? '',
+      assetAddress: a.asset_address ?? strategy.value?.assetAddress ?? '',
+      assetSymbol: a.asset_symbol ?? strategy.value?.assetSymbol ?? '',
+      vaultSymbol: a.vault_symbol ?? a.asset_symbol ?? '',
+      decimals: decimalsForAsset(a.asset_address ?? '', a.asset_symbol ?? ''),
     }))
   }
 
@@ -48,6 +60,10 @@ const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
     return [{
       address: props.pocket.vault_address,
       protocol: props.pocket.vault_protocol ?? '',
+      assetAddress: props.pocket.vault_asset ?? strategy.value?.assetAddress ?? '',
+      assetSymbol: strategy.value?.assetSymbol ?? '',
+      vaultSymbol: props.pocket.vault_symbol ?? '',
+      decimals: strategy.value?.decimals ?? 6,
     }]
   }
 
@@ -65,7 +81,40 @@ const allocs = computed<Array<{ address: string; protocol: string }>>(() => {
     if (seen.has(k)) return false
     seen.add(k)
     return true
-  })
+  }).map(a => ({
+    address: a.address,
+    protocol: a.protocol,
+    assetAddress: strategy.value?.assetAddress ?? '',
+    assetSymbol: strategy.value?.assetSymbol ?? '',
+    vaultSymbol: '',
+    decimals: strategy.value?.decimals ?? 6,
+  }))
+})
+
+// Asset decimals lookup — OUTPUT_TOKENS covers the common ones; falls back to
+// 18 for unknown tokens (safe default for most ERC20s).
+function decimalsForAsset(addr: string, symbol: string): number {
+  const lower = addr.toLowerCase()
+  const byAddr = OUTPUT_TOKENS.find(t => t.address.toLowerCase() === lower)
+  if (byAddr) return byAddr.decimals
+  const bySym = OUTPUT_TOKENS.find(t => t.symbol === symbol)
+  if (bySym) return bySym.decimals
+  if (symbol === 'USDC' || symbol === 'USDT') return 6
+  if (symbol === 'cbBTC' || symbol === 'WBTC') return 8
+  return 18
+}
+
+// Currently-selected allocation for this withdraw operation. Always points to
+// one specific vault — for single-vault pockets it's the only alloc, for
+// multi-vault pockets the user picks via the allocation picker.
+const selectedAllocAddress = ref<string | null>(null)
+const selectedAlloc = computed<WithdrawAlloc | null>(() => {
+  if (!allocs.value.length) return null
+  if (selectedAllocAddress.value) {
+    const match = allocs.value.find(a => a.address === selectedAllocAddress.value)
+    if (match) return match
+  }
+  return allocs.value[0] ?? null
 })
 
 // ── Output token options (same network = Base) ──────────────────────────────
@@ -78,8 +127,10 @@ const OUTPUT_TOKENS = [
 
 const selectedOutput = ref(OUTPUT_TOKENS[0])
 
-// Default output = same token as vault asset
-watch(() => strategy.value?.assetSymbol, (sym) => {
+// Default output = the selected alloc's own asset (so "same token" withdraw
+// is the default for single-asset). When the user swaps the selected alloc in
+// a mixed-asset pocket, the output follows.
+watch(() => selectedAlloc.value?.assetSymbol, (sym) => {
   if (!sym) return
   const match = OUTPUT_TOKENS.find(t => t.symbol === sym)
   if (match) selectedOutput.value = match
@@ -109,13 +160,17 @@ async function fetchUsdcBalance() {
 
 const hasGas = computed(() => parseFloat(usdcForGas.value) > 0.001)
 
+// Per-allocation balances (raw shares + underlying assets in that alloc's
+// native decimals). The dialog displays whichever alloc is currently selected.
+const vaultAssets = ref<Map<string, bigint>>(new Map())
+
 async function fetchVaultBalance() {
   if (!address.value || !allocs.value.length) return
   loadingBalance.value = true
   try {
     const pub = getPublicClient()
-    let total = 0n
     const sharesMap = new Map<string, bigint>()
+    const assetsMap = new Map<string, bigint>()
 
     for (const alloc of allocs.value) {
       try {
@@ -127,25 +182,61 @@ async function fetchVaultBalance() {
         })
         sharesMap.set(alloc.address, shares)
         if (shares > 0n) {
+          let assets: bigint
           try {
-            total += await pub.readContract({
+            assets = await pub.readContract({
               address: alloc.address as `0x${string}`,
               abi: [{ name: 'convertToAssets', type: 'function', stateMutability: 'view', inputs: [{ name: '', type: 'uint256' }], outputs: [{ type: 'uint256' }] }],
               functionName: 'convertToAssets',
               args: [shares],
             })
-          } catch { total += shares }
+          } catch {
+            // Aave aTokens: balance is 1:1 underlying
+            assets = shares
+          }
+          assetsMap.set(alloc.address, assets)
+        } else {
+          assetsMap.set(alloc.address, 0n)
         }
       } catch { /* skip */ }
     }
     vaultShares.value = sharesMap
-    vaultBalance.value = formatUnits(total, strategy.value?.decimals ?? 6)
+    vaultAssets.value = assetsMap
+
+    // Auto-select the alloc with the largest balance on first load
+    if (!selectedAllocAddress.value) {
+      let best: { addr: string; bal: bigint } | null = null
+      for (const alloc of allocs.value) {
+        const a = assetsMap.get(alloc.address) ?? 0n
+        if (!best || a > best.bal) best = { addr: alloc.address, bal: a }
+      }
+      if (best) selectedAllocAddress.value = best.addr
+    }
+    refreshSelectedBalance()
   } catch {
     vaultBalance.value = '0'
   } finally {
     loadingBalance.value = false
   }
 }
+
+function refreshSelectedBalance() {
+  const sel = selectedAlloc.value
+  if (!sel) { vaultBalance.value = '0'; return }
+  const assets = vaultAssets.value.get(sel.address) ?? 0n
+  vaultBalance.value = formatUnits(assets, sel.decimals)
+}
+
+// Multi-vault detection — drives whether amount input is USD (pocket-wide)
+// or native asset units (single-vault only).
+const isMultiVault = computed(() => allocs.value.length > 1)
+
+// Pocket-wide total USD across all allocs (for multi-vault display + MAX)
+const totalPocketUsd = computed(() => {
+  if (!props.pocket) return 0
+  const pos = profileStore.pocketPositions[props.pocket.id]
+  return pos?.usdValue ?? 0
+})
 
 // ── Amount + quote ───────────────────────────────────────────────────────────
 const amount = ref('')
@@ -154,22 +245,33 @@ const quotesLoading = ref(false)
 let quoteTimer: ReturnType<typeof setTimeout> | null = null
 
 const isSameToken = computed(() => {
-  if (!strategy.value) return true
-  return selectedOutput.value.symbol === strategy.value.assetSymbol ||
-    (selectedOutput.value.symbol === 'ETH' && strategy.value.assetSymbol === 'WETH')
+  const sel = selectedAlloc.value
+  if (!sel) return true
+  return selectedOutput.value.symbol === sel.assetSymbol ||
+    (selectedOutput.value.symbol === 'ETH' && sel.assetSymbol === 'WETH')
+})
+
+// Multi-vault helpers: per-alloc same-as-output check + expected tx count
+function sameAsOutput(alloc: WithdrawAlloc): boolean {
+  const out = selectedOutput.value.symbol
+  return out === alloc.assetSymbol || (out === 'ETH' && alloc.assetSymbol === 'WETH')
+}
+const swapCount = computed(() => {
+  let count = allocs.value.length  // always N redeems
+  for (const a of allocs.value) {
+    if (!sameAsOutput(a)) count++  // + swap when alloc asset ≠ output
+  }
+  return count
 })
 
 // Minimum withdraw in USD terms (below this, gas costs more than the withdraw)
 const MIN_WITHDRAW_USD = 0.10
 
 const balanceTooSmall = computed(() => {
+  if (isMultiVault.value) return totalPocketUsd.value < 0.01
   const bal = parseFloat(vaultBalance.value)
   if (bal <= 0) return true
-  // Check if value is dust (< $0.01 equivalent)
-  // cbBTC: 8 decimals, ~$84k/BTC → 0.00000012 = ~$0.01
-  // WETH: 18 decimals, ~$3k/ETH → 0.000003 = ~$0.01
-  // USDC: 6 decimals → 0.01 = $0.01
-  const decimals = strategy.value?.decimals ?? 6
+  const decimals = selectedAlloc.value?.decimals ?? 6
   const minAmount = decimals >= 18 ? 0.000001 : decimals >= 8 ? 0.0000001 : 0.001
   return bal < minAmount
 })
@@ -178,36 +280,63 @@ const amountError = computed(() => {
   if (!amount.value) return null
   const val = parseFloat(amount.value)
   if (isNaN(val) || val <= 0) return 'Enter a valid amount'
-  if (val > parseFloat(vaultBalance.value)) return 'Exceeds balance'
+  if (isMultiVault.value) {
+    if (val > totalPocketUsd.value + 0.0001) return 'Exceeds balance'
+  } else {
+    if (val > parseFloat(vaultBalance.value)) return 'Exceeds balance'
+  }
   return null
 })
 
-const canWithdraw = computed(() =>
-  !!amount.value && !amountError.value && parseFloat(amount.value) > 0 &&
-  (isSameToken.value || !!quote.value),
-)
+// Percentage to redeem from each alloc — for multi-vault, derived from the USD
+// input vs total pocket USD. For single-vault, from amount vs vault balance.
+const withdrawPct = computed(() => {
+  const val = parseFloat(amount.value)
+  if (isNaN(val) || val <= 0) return 0
+  if (isMultiVault.value) {
+    if (totalPocketUsd.value <= 0) return 0
+    return Math.min(val / totalPocketUsd.value, 1)
+  }
+  const bal = parseFloat(vaultBalance.value)
+  if (bal <= 0) return 0
+  return Math.min(val / bal, 1)
+})
+
+const canWithdraw = computed(() => {
+  if (!amount.value || amountError.value) return false
+  if (parseFloat(amount.value) <= 0) return false
+  // Multi-vault always redeems same-token per alloc → no quote required
+  if (isMultiVault.value) return true
+  return isSameToken.value || !!quote.value
+})
 
 // ── Opportunity cost preview ────────────────────────────────────────────────
 // Show how much yield user would forfeit by withdrawing now vs holding 1 more month.
 const opportunityCost = computed(() => {
-  if (!strategy.value || !amount.value) return null
+  if (!strategy.value || !amount.value || !selectedAlloc.value) return null
   const amt = parseFloat(amount.value)
   if (isNaN(amt) || amt <= 0) return null
   const apyStr = profileStore.getStrategyApy(strategy.value.key)
   if (!apyStr) return null
   const apy = parseFloat(apyStr) / 100
   if (apy <= 0) return null
-  // 30-day yield = principal × (1 + apy)^(30/365) - principal
   const monthYield = amt * (Math.pow(1 + apy, 30 / 365) - 1)
-  // Convert to USD (USDC = 1, others use price)
-  const price = profileStore.getAssetPrice(strategy.value.key) || 0
+  // Price for the selected alloc's asset (falls back to strategy price for
+  // legacy single-vault pockets where the strategy price is canonical)
+  const price = (profileStore.assetPrices as Record<string, number>)[selectedAlloc.value.assetAddress.toLowerCase()]
+    ?? profileStore.getAssetPrice(strategy.value.key)
+    ?? 0
   return {
     monthUsd: monthYield * price,
     yearUsd: amt * apy * price,
   }
 })
 
-function setMax() { amount.value = vaultBalance.value }
+function setMax() {
+  amount.value = isMultiVault.value
+    ? totalPocketUsd.value.toFixed(6)
+    : vaultBalance.value
+}
 
 // Fetch quote when output token differs from vault token
 watch([amount, selectedOutput], () => {
@@ -220,24 +349,18 @@ watch([amount, selectedOutput], () => {
 })
 
 async function fetchQuote() {
-  if (!address.value || !allocs.value.length || !amount.value) return
+  if (!address.value || !selectedAlloc.value || !amount.value) return
   quotesLoading.value = true
   try {
-    // Use first vault that has shares
-    let targetAlloc = allocs.value[0]
-    let targetShares = 0n
-    for (const alloc of allocs.value) {
-      const s = vaultShares.value.get(alloc.address) ?? 0n
-      if (s > 0n) { targetAlloc = alloc; targetShares = s; break }
-    }
+    const targetAlloc = selectedAlloc.value
+    const targetShares = vaultShares.value.get(targetAlloc.address) ?? 0n
     if (targetShares === 0n) { quotesLoading.value = false; return }
 
-    // Calculate shares to redeem — proportional to requested amount
     const totalBal = parseFloat(vaultBalance.value)
     if (totalBal <= 0) { quotesLoading.value = false; return }
     const pct = Math.min(parseFloat(amount.value) / totalBal, 1)
     const shareAmount = pct >= 0.999
-      ? targetShares  // MAX — use all shares
+      ? targetShares
       : (targetShares * BigInt(Math.round(pct * 1e9))) / BigInt(1e9)
     if (shareAmount === 0n) { quotesLoading.value = false; return }
 
@@ -273,18 +396,65 @@ const withdrawing = ref(false)
 const withdrawStep = ref<'idle' | 'redeeming' | 'confirming' | 'done'>('idle')
 const withdrawError = ref('')
 
+// Multi-vault progress tracking. `progress` holds the human-readable label for
+// what's happening right now (e.g. "Redeeming 1/2 · BBQUSDC"). Cleared when
+// withdrawing goes idle.
+const progress = ref<{ label: string; step: number; total: number } | null>(null)
+
+async function redeemOneAlloc(
+  alloc: WithdrawAlloc,
+  pct: number,
+  send: (to: string, data: string, value?: string) => Promise<`0x${string}`>,
+  pub: ReturnType<typeof getPublicClient>,
+  encodeFunctionData: typeof import('viem').encodeFunctionData,
+  parseAbi: typeof import('viem').parseAbi,
+): Promise<`0x${string}` | null> {
+  const shares = vaultShares.value.get(alloc.address) ?? 0n
+  if (shares === 0n) return null
+  const redeemAmount = pct >= 0.999
+    ? shares
+    : (shares * BigInt(Math.round(pct * 1e9))) / BigInt(1e9)
+  if (redeemAmount === 0n) return null
+
+  const isAave = alloc.protocol.toLowerCase().includes('aave')
+  let data: `0x${string}`
+  let to: `0x${string}`
+
+  if (isAave) {
+    const AAVE_POOL_BASE = '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5' as `0x${string}`
+    const withdrawAmount = pct >= 0.999
+      ? BigInt(2) ** BigInt(256) - BigInt(1)
+      : redeemAmount
+    data = encodeFunctionData({
+      abi: parseAbi(['function withdraw(address asset, uint256 amount, address to) returns (uint256)']),
+      functionName: 'withdraw',
+      args: [alloc.assetAddress as `0x${string}`, withdrawAmount, address.value!],
+    })
+    to = AAVE_POOL_BASE
+  } else {
+    data = encodeFunctionData({
+      abi: parseAbi(['function redeem(uint256 shares, address receiver, address owner) returns (uint256)']),
+      functionName: 'redeem',
+      args: [redeemAmount, address.value!, address.value!],
+    })
+    to = alloc.address as `0x${string}`
+  }
+
+  const hash = await send(to, data)
+  await pub.waitForTransactionReceipt({ hash })
+  return hash
+}
+
 async function executeWithdraw() {
-  if (!address.value || !canWithdraw.value || !strategy.value || !props.pocket) return
+  if (!address.value || !canWithdraw.value || !props.pocket) return
   withdrawing.value = true
   withdrawStep.value = 'redeeming'
   withdrawError.value = ''
 
-  // Track the last successful tx hash so we can record it to DB
   let lastHash: `0x${string}` | null = null
 
   try {
     const pub = getPublicClient()
-
     const { encodeFunctionData, parseAbi } = await import('viem')
     const client = await getWalletClient()
 
@@ -296,64 +466,149 @@ async function executeWithdraw() {
       })
     }
 
-    if (isSameToken.value) {
-      // Direct vault redeem — handle both ERC-4626 and Aave aTokens
-      for (const alloc of allocs.value) {
-        const shares = vaultShares.value.get(alloc.address) ?? 0n
-        if (shares === 0n) continue
+    // Read underlying token balance for an asset (used to compute actual
+    // redeemed delta so the subsequent LI.FI swap uses the true amount,
+    // not an estimate that could drift by dust).
+    async function erc20Balance(tokenAddr: string): Promise<bigint> {
+      if (tokenAddr.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+          || tokenAddr.toLowerCase() === '0x0000000000000000000000000000000000000000') {
+        return await pub.getBalance({ address: address.value! })
+      }
+      return await pub.readContract({
+        address: tokenAddr as `0x${string}`,
+        abi: parseAbi(['function balanceOf(address) view returns (uint256)']),
+        functionName: 'balanceOf',
+        args: [address.value!],
+      })
+    }
 
-        const totalBal = parseFloat(vaultBalance.value)
-        const pct = Math.min(parseFloat(amount.value) / totalBal, 1)
-        const redeemAmount = pct >= 0.999
-          ? shares
-          : (shares * BigInt(Math.round(pct * 1e9))) / BigInt(1e9)
-        if (redeemAmount === 0n) continue
+    // Approve `amount` of `token` to `spender` if current allowance < amount.
+    async function ensureApproval(token: string, spender: string, amount: bigint): Promise<void> {
+      const current = await pub.readContract({
+        address: token as `0x${string}`,
+        abi: parseAbi(['function allowance(address,address) view returns (uint256)']),
+        functionName: 'allowance',
+        args: [address.value!, spender as `0x${string}`],
+      })
+      if (current >= amount) return
+      const data = encodeFunctionData({
+        abi: parseAbi(['function approve(address,uint256) returns (bool)']),
+        functionName: 'approve',
+        args: [spender as `0x${string}`, BigInt(2) ** BigInt(256) - BigInt(1)],
+      })
+      const hash = await send(token, data)
+      await pub.waitForTransactionReceipt({ hash })
+    }
 
-        let data: `0x${string}`
-        const isAave = alloc.protocol.toLowerCase().includes('aave')
+    const pct = withdrawPct.value
+    const outputSym = selectedOutput.value.symbol
+    const outputAddr = selectedOutput.value.address
 
-        if (isAave) {
-          // Aave: aToken balance = underlying amount (1:1)
-          // Withdraw via Aave Pool contract
-          const AAVE_POOL_BASE = '0xA238Dd80C259a72e81d7e4664a9801593F98d1c5' as `0x${string}`
-          // Use max uint256 to withdraw all, or specific amount
-          const withdrawAmount = pct >= 0.999
-            ? BigInt(2) ** BigInt(256) - BigInt(1) // type(uint256).max = withdraw all
-            : redeemAmount
-          data = encodeFunctionData({
-            abi: parseAbi(['function withdraw(address asset, uint256 amount, address to) returns (uint256)']),
-            functionName: 'withdraw',
-            args: [strategy.value!.assetAddress, withdrawAmount, address.value!],
-          })
-          const hash = await send(AAVE_POOL_BASE, data)
-          lastHash = hash
+    // Multi-vault: loop every allocation. For each alloc:
+    //   1. Redeem shares → receive native underlying asset
+    //   2. If native asset ≠ requested output token, swap the actual redeemed
+    //      balance via LI.FI (one quote per alloc, fetched with real amount)
+    // Partial failures are tolerated — each alloc is independent.
+    if (isMultiVault.value) {
+      const totalSteps = swapCount.value  // N redeems + M swaps
+      let stepIdx = 0
+      for (let i = 0; i < allocs.value.length; i++) {
+        const alloc = allocs.value[i]!
+        const allocLabel = alloc.vaultSymbol || alloc.assetSymbol
+        try {
+          const sameOut = alloc.assetSymbol === outputSym
+            || (outputSym === 'ETH' && alloc.assetSymbol === 'WETH')
+
+          let balBefore = 0n
+          if (!sameOut) balBefore = await erc20Balance(alloc.assetAddress)
+
+          // Step 1: Redeem
+          stepIdx++
+          progress.value = { label: `Redeeming ${allocLabel}`, step: stepIdx, total: totalSteps }
+          withdrawStep.value = 'redeeming'
+          const redeemHash = await redeemOneAlloc(alloc, pct, send, pub, encodeFunctionData, parseAbi)
+          if (!redeemHash) continue
+          lastHash = redeemHash
           withdrawStep.value = 'confirming'
-          await pub.waitForTransactionReceipt({ hash })
-        } else {
-          // ERC-4626: redeem shares
-          data = encodeFunctionData({
-            abi: parseAbi(['function redeem(uint256 shares, address receiver, address owner) returns (uint256)']),
-            functionName: 'redeem',
-            args: [redeemAmount, address.value!, address.value!],
+
+          if (sameOut) continue
+
+          // Step 2: Compute actual redeemed delta, quote LI.FI, swap
+          const balAfter = await erc20Balance(alloc.assetAddress)
+          const delta = balAfter - balBefore
+          if (delta <= 0n) {
+            console.warn(`[withdraw] ${alloc.assetSymbol}: no balance delta, skipping swap`)
+            continue
+          }
+
+          stepIdx++
+          progress.value = { label: `Swapping ${alloc.assetSymbol} → ${outputSym}`, step: stepIdx, total: totalSteps }
+          withdrawStep.value = 'redeeming'
+          const swapQuote = await $fetch<any>('/api/lifi/quote', {
+            query: {
+              fromChain: 8453,
+              toChain: 8453,
+              fromToken: alloc.assetAddress,
+              toToken: outputAddr,
+              fromAmount: delta.toString(),
+              fromAddress: address.value,
+              slippage: 0.005,
+            },
+          }).catch((e) => {
+            console.warn(`[withdraw] swap quote ${alloc.assetSymbol}→${outputSym} failed:`, e)
+            return null
           })
-          const hash = await send(alloc.address, data)
-          lastHash = hash
+
+          if (!swapQuote?.transactionRequest) {
+            withdrawError.value = `Swap ${alloc.assetSymbol}→${outputSym} unavailable — kept as ${alloc.assetSymbol}`
+            continue
+          }
+
+          if (swapQuote.estimate?.approvalAddress) {
+            await ensureApproval(alloc.assetAddress, swapQuote.estimate.approvalAddress, delta)
+          }
+          const swapTx = swapQuote.transactionRequest
+          const swapHash = await send(swapTx.to, swapTx.data, swapTx.value)
+          lastHash = swapHash
           withdrawStep.value = 'confirming'
-          await pub.waitForTransactionReceipt({ hash })
+          await pub.waitForTransactionReceipt({ hash: swapHash })
+        } catch (e: any) {
+          console.error(`[withdraw] alloc ${alloc.address} failed:`, e)
+          withdrawError.value = `${allocLabel} failed: ${e.shortMessage || e.message || 'unknown'}`
+          // Continue with remaining allocs even if one fails
         }
       }
+      progress.value = null
+
+      if (!lastHash) {
+        withdrawStep.value = 'idle'
+        if (!withdrawError.value) withdrawError.value = 'Nothing to withdraw'
+        return
+      }
+    } else if (isSameToken.value) {
+      // Single-vault, same-token direct redeem
+      const alloc = selectedAlloc.value!
+      const shares = vaultShares.value.get(alloc.address) ?? 0n
+      if (shares === 0n) {
+        withdrawError.value = 'No balance in selected vault'
+        withdrawStep.value = 'idle'
+        return
+      }
+      const hash = await redeemOneAlloc(alloc, pct, send, pub, encodeFunctionData, parseAbi)
+      if (hash) {
+        lastHash = hash
+        withdrawStep.value = 'confirming'
+      }
     } else {
-      // Swap via LI.FI
+      // Single-vault, cross-token swap via LI.FI
+      const alloc = selectedAlloc.value!
+      const shares = vaultShares.value.get(alloc.address) ?? 0n
       if (!quote.value?.transactionRequest) {
         withdrawError.value = 'No route found'
         withdrawStep.value = 'idle'
         return
       }
 
-      // Pre-approve vault token to LI.FI router in a SEPARATE tx
-      // This must happen before the swap tx, otherwise the batch simulation fails
-      const alloc = allocs.value[0]
-      const shares = vaultShares.value.get(alloc.address) ?? 0n
       if (shares > 0n && quote.value.estimate?.approvalAddress) {
         const spender = quote.value.estimate.approvalAddress as `0x${string}`
         const allowance = await pub.readContract({
@@ -385,14 +640,26 @@ async function executeWithdraw() {
     // Record withdrawal to DB so dashboard PnL stays accurate.
     // `amount` is stored as USD decimal (matches recorder convention for deposits).
     if (lastHash) {
-      const assetPrice = profileStore.getAssetPrice(props.pocket.strategy_key) || 0
-      const withdrawnTokens = parseFloat(amount.value) || 0
-      const usdValue = withdrawnTokens * assetPrice
+      let usdValue: number
+      let assetSymbol: string
+      if (isMultiVault.value) {
+        // Multi-vault: user's input is ALREADY in USD (whole-pocket amount)
+        usdValue = parseFloat(amount.value) || 0
+        assetSymbol = 'MIXED'
+      } else {
+        const alloc = selectedAlloc.value!
+        const priceForAlloc = (profileStore.assetPrices as Record<string, number>)[alloc.assetAddress.toLowerCase()]
+          ?? profileStore.getAssetPrice(props.pocket.strategy_key)
+          ?? 0
+        const withdrawnTokens = parseFloat(amount.value) || 0
+        usdValue = withdrawnTokens * priceForAlloc
+        assetSymbol = alloc.assetSymbol
+      }
       await recordTransaction({
         pocket_id: props.pocket.id,
         type: 'redeem',
         amount: usdValue.toFixed(6),
-        asset_symbol: strategy.value.assetSymbol,
+        asset_symbol: assetSymbol,
         tx_hash: lastHash,
         timestamp: Math.floor(Date.now() / 1000),
       }).catch((e: any) => console.warn('[withdraw] recordTransaction failed:', e))
@@ -402,7 +669,7 @@ async function executeWithdraw() {
     // while we wait for the onchain read. Refetch this pocket's balance right
     // away — don't rely solely on the parent's @done handler, which runs a
     // full multi-pocket refetch that can race with dialog close.
-    profileStore.pocketPositions[props.pocket.id] = { shares: 0n, value: 0n }
+    profileStore.pocketPositions[props.pocket.id] = { shares: 0n, value: 0n, usdValue: 0 }
     try {
       await profileStore.fetchPocketPosition(props.pocket)
     } catch (e) {
@@ -420,6 +687,7 @@ async function executeWithdraw() {
     withdrawStep.value = 'idle'
   } finally {
     withdrawing.value = false
+    progress.value = null
   }
 }
 
@@ -430,11 +698,7 @@ watch(open, (v) => {
     quote.value = null
     withdrawError.value = ''
     withdrawStep.value = 'idle'
-    // Default output to vault's own token
-    if (strategy.value) {
-      const match = OUTPUT_TOKENS.find(t => t.symbol === strategy.value!.assetSymbol)
-      if (match) selectedOutput.value = match
-    }
+    selectedAllocAddress.value = null  // re-pick largest alloc on each open
     fetchVaultBalance()
     fetchUsdcBalance()
   }
@@ -453,7 +717,9 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
       <div class="px-5 pt-5 pb-4 border-b border-border/40">
         <DialogHeader>
           <DialogTitle class="text-base">
-            {{ withdrawStep === 'done' ? 'Withdrawn!' : `Withdraw ${strategy?.assetSymbol ?? ''}` }}
+            <template v-if="withdrawStep === 'done'">Withdrawn!</template>
+            <template v-else-if="allocs.length > 1">Withdraw from {{ pocket?.name ?? 'pocket' }}</template>
+            <template v-else>Withdraw {{ selectedAlloc?.assetSymbol ?? '' }}</template>
           </DialogTitle>
           <DialogDescription class="sr-only">Withdraw from vault</DialogDescription>
         </DialogHeader>
@@ -465,7 +731,10 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
           <Icon name="lucide:check" class="w-8 h-8 text-primary" />
         </div>
         <h3 class="text-lg font-bold mb-1">Tokens returned</h3>
-        <p class="text-sm text-muted-foreground">
+        <p v-if="isMultiVault" class="text-sm text-muted-foreground">
+          Funds from {{ allocs.length }} vaults are back in your wallet.
+        </p>
+        <p v-else class="text-sm text-muted-foreground">
           {{ estimatedOutput }} {{ selectedOutput.symbol }} is back in your wallet.
         </p>
         <p class="text-xs text-muted-foreground/40 mt-4">Closing automatically…</p>
@@ -474,13 +743,24 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
       <!-- Form -->
       <div v-else class="px-5 py-5 space-y-2">
 
-        <!-- FROM: vault -->
+        <!-- FROM: pocket (multi-vault) OR vault (single) -->
         <div class="rounded-2xl bg-muted/40 border border-border/40 p-4">
           <div class="flex items-center justify-between mb-2">
-            <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">From vault</p>
+            <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {{ isMultiVault ? 'From pocket' : 'From vault' }}
+            </p>
             <span v-if="!loadingBalance" class="text-[11px] text-muted-foreground">
-              {{ parseFloat(vaultBalance).toLocaleString('en-US', { maximumFractionDigits: 6 }) }} {{ strategy?.assetSymbol }}
-              <button v-if="parseFloat(vaultBalance) > 0" class="text-primary font-semibold ml-1" @click="setMax">MAX</button>
+              <template v-if="isMultiVault">
+                ${{ totalPocketUsd.toLocaleString('en-US', { maximumFractionDigits: 2 }) }} total
+              </template>
+              <template v-else>
+                {{ parseFloat(vaultBalance).toLocaleString('en-US', { maximumFractionDigits: 6 }) }} {{ selectedAlloc?.assetSymbol }}
+              </template>
+              <button
+                v-if="(isMultiVault ? totalPocketUsd : parseFloat(vaultBalance)) > 0"
+                class="text-primary font-semibold ml-1"
+                @click="setMax"
+              >MAX</button>
             </span>
             <Skeleton v-else class="h-3 w-20" />
           </div>
@@ -502,8 +782,7 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
                 />
               </div>
               <div class="flex items-center gap-2 bg-background/60 rounded-xl px-3 py-2 border border-border/60">
-                <img v-if="strategy?.vaultLogo" :src="strategy.vaultLogo" class="w-6 h-6 rounded-full" />
-                <span class="font-bold text-sm">{{ strategy?.assetSymbol }}</span>
+                <span class="font-bold text-sm">{{ isMultiVault ? 'USD' : (selectedAlloc?.assetSymbol ?? '') }}</span>
               </div>
             </div>
             <p v-if="amountError" class="text-xs text-destructive mt-1.5">{{ amountError }}</p>
@@ -517,8 +796,53 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
           </div>
         </div>
 
-        <!-- TO: wallet + output token picker -->
-        <div class="rounded-2xl bg-muted/40 border border-border/40 p-4">
+        <!-- TO: multi-vault — output token picker + per-alloc breakdown -->
+        <div v-if="isMultiVault" class="rounded-2xl bg-muted/40 border border-border/40 p-4 space-y-3">
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receive as</p>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="t in OUTPUT_TOKENS" :key="t.symbol"
+                class="flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs transition-colors"
+                :class="selectedOutput.symbol === t.symbol
+                  ? 'border-primary bg-primary/10 font-semibold'
+                  : 'border-border hover:border-primary/40 text-muted-foreground'"
+                @click="selectedOutput = t"
+              >
+                <img :src="t.logo" class="w-4 h-4 rounded-full" />
+                {{ t.symbol }}
+              </button>
+            </div>
+          </div>
+          <div class="space-y-1.5">
+            <div
+              v-for="alloc in allocs" :key="alloc.address"
+              class="flex items-center gap-2 px-3 py-2 rounded-xl bg-background/40 border border-border/40"
+            >
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-semibold truncate">{{ alloc.vaultSymbol || alloc.assetSymbol }}</p>
+                <p class="text-[10px] text-muted-foreground/60 truncate">
+                  redeem {{ alloc.assetSymbol }}<span v-if="!sameAsOutput(alloc)"> → swap to {{ selectedOutput.symbol }}</span>
+                </p>
+              </div>
+              <div class="text-right shrink-0">
+                <p class="text-sm font-bold tabular-nums text-primary">
+                  ~{{ parseFloat(formatUnits(
+                    (vaultAssets.get(alloc.address) ?? 0n) * BigInt(Math.round(withdrawPct * 1e9)) / BigInt(1e9),
+                    alloc.decimals
+                  )).toLocaleString('en-US', { maximumFractionDigits: 6 }) }}
+                </p>
+                <p class="text-[9px] text-muted-foreground/50">{{ alloc.assetSymbol }}</p>
+              </div>
+            </div>
+          </div>
+          <p class="text-[10px] text-muted-foreground/60 text-center">
+            Fires {{ swapCount }} tx: {{ allocs.length }} redeem{{ swapCount > allocs.length ? ' + ' + (swapCount - allocs.length) + ' swap' : '' }}
+          </p>
+        </div>
+
+        <!-- TO: single-vault wallet + output token picker -->
+        <div v-else class="rounded-2xl bg-muted/40 border border-border/40 p-4">
           <p class="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Receive as</p>
           <div class="flex items-end gap-3">
             <div class="flex-1 min-w-0">
@@ -545,36 +869,34 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
           </div>
         </div>
 
-        <!-- Detailed transaction preview -->
+        <!-- Detailed transaction preview (single-vault only — multi-vault uses breakdown above) -->
         <AppTxPreview
-          v-if="!isSameToken && amount && (quotesLoading || quote)"
+          v-if="!isMultiVault && !isSameToken && amount && (quotesLoading || quote)"
           :quote="quote"
           :loading="quotesLoading"
           title="Withdraw Preview"
-          :subtitle="`${strategy?.assetSymbol ?? ''} vault → ${selectedOutput.symbol}`"
+          :subtitle="`${selectedAlloc?.vaultSymbol || selectedAlloc?.assetSymbol || ''} → ${selectedOutput.symbol}`"
         />
 
         <!-- Same-token withdraw: manual preview (direct vault redeem) -->
         <AppTxPreview
-          v-else-if="isSameToken && amount && parseFloat(amount) > 0 && strategy"
+          v-else-if="!isMultiVault && isSameToken && amount && parseFloat(amount) > 0 && selectedAlloc"
           :manual="{
             fromChainId: 8453,
             fromChainName: 'Base',
-            fromTokenSymbol: `${strategy.assetSymbol} vault shares`,
-            fromTokenLogo: strategy.vaultLogo,
+            fromTokenSymbol: `${selectedAlloc.vaultSymbol || selectedAlloc.assetSymbol} shares`,
             fromAmount: amount,
             toChainId: 8453,
             toChainName: 'Base',
-            toTokenSymbol: strategy.assetSymbol,
-            toTokenLogo: strategy.vaultLogo,
+            toTokenSymbol: selectedAlloc.assetSymbol,
             toAmount: amount,
             steps: [
-              { label: 'Redeem', via: allocs[0]?.protocol ?? 'vault contract' },
+              { label: 'Redeem', via: selectedAlloc.protocol || 'vault contract' },
             ],
             estTimeSeconds: 5,
           }"
           title="Withdraw Preview"
-          :subtitle="`Direct redeem from ${strategy?.assetSymbol} vault`"
+          :subtitle="`Direct redeem from ${selectedAlloc?.vaultSymbol || selectedAlloc?.assetSymbol}`"
         />
 
         <div v-else-if="!isSameToken && amount && parseFloat(amount) > 0 && !quotesLoading && !quote" class="text-[11px] text-amber-400 px-1">
@@ -583,22 +905,47 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
 
         <!-- Progress -->
         <div v-if="withdrawing" class="rounded-2xl bg-muted/40 border border-border/40 p-4 space-y-3">
-          <div class="flex items-center gap-3">
-            <Icon
-              :name="withdrawStep === 'redeeming' ? 'lucide:loader-2' : 'lucide:check-circle-2'"
-              class="w-4 h-4 shrink-0"
-              :class="withdrawStep === 'redeeming' ? 'text-primary animate-spin' : 'text-primary'"
-            />
-            <span class="text-sm">{{ isSameToken ? 'Redeeming from vault' : 'Swapping via LI.FI' }}</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <Icon
-              :name="withdrawStep === 'confirming' ? 'lucide:loader-2' : 'lucide:circle'"
-              class="w-4 h-4 shrink-0"
-              :class="withdrawStep === 'confirming' ? 'text-primary animate-spin' : 'text-muted-foreground/40'"
-            />
-            <span class="text-sm" :class="withdrawStep === 'confirming' ? 'text-foreground' : 'text-muted-foreground/40'">Confirming</span>
-          </div>
+          <!-- Multi-vault: per-step counter + label -->
+          <template v-if="isMultiVault && progress">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Step {{ progress.step }} / {{ progress.total }}
+              </span>
+              <span class="text-[11px] text-muted-foreground/60">
+                {{ withdrawStep === 'confirming' ? 'confirming…' : 'sending…' }}
+              </span>
+            </div>
+            <div class="flex items-center gap-3">
+              <Icon name="lucide:loader-2" class="w-4 h-4 shrink-0 text-primary animate-spin" />
+              <span class="text-sm font-semibold">{{ progress.label }}</span>
+            </div>
+            <!-- Progress bar -->
+            <div class="h-1 rounded-full bg-muted overflow-hidden">
+              <div
+                class="h-full bg-primary transition-all duration-300"
+                :style="{ width: `${(progress.step / progress.total) * 100}%` }"
+              />
+            </div>
+          </template>
+          <!-- Single-vault: original two-line indicator -->
+          <template v-else>
+            <div class="flex items-center gap-3">
+              <Icon
+                :name="withdrawStep === 'redeeming' ? 'lucide:loader-2' : 'lucide:check-circle-2'"
+                class="w-4 h-4 shrink-0"
+                :class="withdrawStep === 'redeeming' ? 'text-primary animate-spin' : 'text-primary'"
+              />
+              <span class="text-sm">{{ isSameToken ? 'Redeeming from vault' : 'Swapping via LI.FI' }}</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <Icon
+                :name="withdrawStep === 'confirming' ? 'lucide:loader-2' : 'lucide:circle'"
+                class="w-4 h-4 shrink-0"
+                :class="withdrawStep === 'confirming' ? 'text-primary animate-spin' : 'text-muted-foreground/40'"
+              />
+              <span class="text-sm" :class="withdrawStep === 'confirming' ? 'text-foreground' : 'text-muted-foreground/40'">Confirming</span>
+            </div>
+          </template>
         </div>
 
         <!-- Opportunity cost warning -->
@@ -631,7 +978,15 @@ watch([() => allocs.value.map(a => a.address).join(','), address], () => {
           :disabled="!canWithdraw || !hasGas"
           @click="executeWithdraw"
         >
-          {{ !hasGas ? 'Need USDC for gas' : !amount ? 'Enter amount' : amountError ?? (isSameToken ? `Withdraw ${strategy?.assetSymbol}` : `Swap to ${selectedOutput.symbol}`) }}
+          {{
+            !hasGas ? 'Need USDC for gas'
+            : !amount ? 'Enter amount'
+            : amountError ?? (
+              isMultiVault ? `Withdraw from ${allocs.length} vaults`
+              : isSameToken ? `Withdraw ${selectedAlloc?.assetSymbol ?? ''}`
+              : `Swap to ${selectedOutput.symbol}`
+            )
+          }}
         </Button>
 
         <p v-if="withdrawError" class="text-xs text-destructive text-center">{{ withdrawError }}</p>

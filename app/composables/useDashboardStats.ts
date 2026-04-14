@@ -92,10 +92,16 @@ export function useDashboardStats() {
     return net
   })
 
-  const unrealizedPnlUsd = computed(() => totalValueUsd.value - netContributedUsd.value)
+  const unrealizedPnlUsd = computed(() => {
+    // Closed position → no unrealized PnL (prevents phantom profit from
+    // withdraw-USD-value drift vs deposit-USD-value record)
+    if (totalValueUsd.value < 0.01) return 0
+    return totalValueUsd.value - netContributedUsd.value
+  })
 
   const pnlPercent = computed(() => {
     if (netContributedUsd.value <= 0) return 0
+    if (totalValueUsd.value < 0.01) return 0
     return (unrealizedPnlUsd.value / netContributedUsd.value) * 100
   })
 

@@ -1033,13 +1033,52 @@ const ctaLabel = computed(() => {
         </div>
 
         <!-- Detailed transaction preview (route + fees + time) -->
-        <AppTxPreview
-          v-if="strategyKey && fromToken && amount && (quotesLoading || primaryQuote)"
-          :quote="primaryQuote"
-          :loading="quotesLoading"
-          title="Deposit Preview"
-          :subtitle="`${fromToken?.symbol ?? ''} → ${STRATEGIES[strategyKey].assetSymbol} vault`"
-        />
+        <!-- Single-vault: one preview. Multi-vault: one preview per allocation. -->
+        <template v-if="strategyKey && fromToken && amount && (quotesLoading || primaryQuote)">
+          <!-- Multi-vault: render one preview per allocation + summary -->
+          <div v-if="strategyAllocs.length > 1" class="space-y-2">
+            <div class="flex items-center justify-between px-1">
+              <p class="text-sm font-semibold">Deposit Preview</p>
+              <p class="text-[11px] text-muted-foreground">{{ strategyAllocs.length }} vaults · split {{ strategyAllocs.map(a => Math.round(a.weight * 100) + '%').join(' / ') }}</p>
+            </div>
+            <AppTxPreview
+              v-for="(alloc, i) in strategyAllocs"
+              :key="alloc.address + i"
+              :quote="quotes[i] ?? null"
+              :loading="quotesLoading && !quotes[i]"
+              :title="`${Math.round(alloc.weight * 100)}% → ${alloc.vaultSymbol || alloc.assetSymbol}`"
+              :subtitle="`${alloc.protocol} · ${alloc.assetSymbol}`"
+            />
+            <!-- Aggregate summary across all splits -->
+            <div class="rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-1 text-[11px]">
+              <div class="flex items-center justify-between">
+                <span class="text-muted-foreground">Total you receive</span>
+                <span class="font-semibold text-primary tabular-nums text-right">{{ estimatedOutputDisplay ?? '—' }}</span>
+              </div>
+              <div v-if="estimatedOutputUsd" class="flex items-center justify-between">
+                <span class="text-muted-foreground">Total value</span>
+                <span class="tabular-nums">{{ estimatedOutputUsd }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-muted-foreground">Total fees</span>
+                <span class="tabular-nums">{{ totalFeesUsd ?? '—' }}</span>
+              </div>
+              <div v-if="estTime" class="flex items-center justify-between">
+                <span class="text-muted-foreground">Est. time</span>
+                <span class="tabular-nums">{{ estTime }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Single-vault: original single preview -->
+          <AppTxPreview
+            v-else
+            :quote="primaryQuote"
+            :loading="quotesLoading"
+            title="Deposit Preview"
+            :subtitle="`${fromToken?.symbol ?? ''} → ${strategyAllocs[0]?.vaultSymbol ?? strategyAllocs[0]?.assetSymbol ?? ''}`"
+          />
+        </template>
 
         <!-- CTA -->
         <Button

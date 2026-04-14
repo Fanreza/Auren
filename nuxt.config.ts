@@ -136,6 +136,7 @@ export default defineNuxtConfig({
           }),
         },
         { name: 'theme-color', content: '#86B238' },
+        { name: 'base:app_id', content: '69dd983098077b0aef404af1' },
       ],
       link: [
         { rel: 'icon', type: 'image/jpeg', href: '/new.jpeg' },

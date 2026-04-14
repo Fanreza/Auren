@@ -38,8 +38,12 @@ watch(loginMethod, (val) => {
   else localStorage.removeItem(`${BRAND.storagePrefix}_login_method`)
 })
 
-// Builder Code (ERC-8021) — appended to all transactions for attribution
-const BUILDER_CODE_SUFFIX: `0x${string}` = '0x62635f676c3577666872690b0080218021802180218021802180218021'
+// Builder Code (ERC-8021) — appended to all transactions for attribution.
+// Code: bc_lm1anloh
+// Layout: 11 bytes ASCII (`bc_lm1anloh`) + 1 byte length (0x0b = 11) + 17 bytes
+// padding (0x00 + 8x 0x8021) to the standard 29-byte suffix Base indexers expect.
+// See: https://docs.base.org/apps/builder-codes/builder-codes
+const BUILDER_CODE_SUFFIX: `0x${string}` = '0x62635f6c6d31616e6c6f680b0080218021802180218021802180218021'
 
 // Cached clients
 let _walletClient: WalletClient | null = null

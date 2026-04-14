@@ -316,14 +316,6 @@ export function useVault() {
             await pub.waitForTransactionReceipt({ hash: approveHash })
           }
 
-          // Read asset balance BEFORE the swap so we can diff later
-          const balBefore = await pub.readContract({
-            address: vaultAssetAddr,
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [fromAddress as `0x${string}`],
-          })
-
           // Execute swap tx
           txState.value = 'awaiting_signature'
           const swapTxReq = swapQuote.transactionRequest
@@ -340,14 +332,25 @@ export function useVault() {
             return
           }
 
-          // Read asset balance AFTER — diff = amount received from swap
-          const balAfter = await pub.readContract({
-            address: vaultAssetAddr,
-            abi: ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [fromAddress as `0x${string}`],
-          })
-          const received = balAfter - balBefore
+          // Parse the receipt logs for the Transfer event where the vault
+          // asset lands at our address. This is atomic — no dependency on
+          // RPC state propagation, so the "first attempt always fails"
+          // behavior from balanceOf lag goes away.
+          const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+          const fromAddrLower = fromAddress.toLowerCase()
+          const vaultAssetLower = vaultAssetAddr.toLowerCase()
+          let received = 0n
+          for (const log of swapReceipt.logs) {
+            if (log.address.toLowerCase() !== vaultAssetLower) continue
+            if (log.topics[0] !== TRANSFER_TOPIC) continue
+            // topics[2] = indexed `to` address (left-padded to 32 bytes)
+            const toTopic = log.topics[2]
+            if (!toTopic) continue
+            const toAddr = ('0x' + toTopic.slice(26)).toLowerCase()
+            if (toAddr !== fromAddrLower) continue
+            // Sum all Transfers to our address (multi-hop swaps may emit more than one)
+            received += BigInt(log.data)
+          }
           if (received <= 0n) {
             txError.value = 'Swap produced no output'
             txState.value = 'failed'

@@ -408,7 +408,7 @@ async function redeemOneAlloc(
   pub: ReturnType<typeof getPublicClient>,
   encodeFunctionData: typeof import('viem').encodeFunctionData,
   parseAbi: typeof import('viem').parseAbi,
-): Promise<`0x${string}` | null> {
+): Promise<{ hash: `0x${string}`; receipt: Awaited<ReturnType<typeof pub.waitForTransactionReceipt>> } | null> {
   const shares = vaultShares.value.get(alloc.address) ?? 0n
   if (shares === 0n) return null
   const redeemAmount = pct >= 0.999
@@ -441,8 +441,8 @@ async function redeemOneAlloc(
   }
 
   const hash = await send(to, data)
-  await pub.waitForTransactionReceipt({ hash })
-  return hash
+  const receipt = await pub.waitForTransactionReceipt({ hash })
+  return { hash, receipt }
 }
 
 async function executeWithdraw() {
@@ -463,22 +463,6 @@ async function executeWithdraw() {
         to: to as `0x${string}`,
         data: data as `0x${string}`,
         value: value ? BigInt(value) : 0n,
-      })
-    }
-
-    // Read underlying token balance for an asset (used to compute actual
-    // redeemed delta so the subsequent LI.FI swap uses the true amount,
-    // not an estimate that could drift by dust).
-    async function erc20Balance(tokenAddr: string): Promise<bigint> {
-      if (tokenAddr.toLowerCase() === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
-          || tokenAddr.toLowerCase() === '0x0000000000000000000000000000000000000000') {
-        return await pub.getBalance({ address: address.value! })
-      }
-      return await pub.readContract({
-        address: tokenAddr as `0x${string}`,
-        abi: parseAbi(['function balanceOf(address) view returns (uint256)']),
-        functionName: 'balanceOf',
-        args: [address.value!],
       })
     }
 
@@ -519,25 +503,34 @@ async function executeWithdraw() {
           const sameOut = alloc.assetSymbol === outputSym
             || (outputSym === 'ETH' && alloc.assetSymbol === 'WETH')
 
-          let balBefore = 0n
-          if (!sameOut) balBefore = await erc20Balance(alloc.assetAddress)
-
           // Step 1: Redeem
           stepIdx++
           progress.value = { label: `Redeeming ${allocLabel}`, step: stepIdx, total: totalSteps }
           withdrawStep.value = 'redeeming'
-          const redeemHash = await redeemOneAlloc(alloc, pct, send, pub, encodeFunctionData, parseAbi)
-          if (!redeemHash) continue
-          lastHash = redeemHash
+          const redeemResult = await redeemOneAlloc(alloc, pct, send, pub, encodeFunctionData, parseAbi)
+          if (!redeemResult) continue
+          lastHash = redeemResult.hash
           withdrawStep.value = 'confirming'
 
           if (sameOut) continue
 
-          // Step 2: Compute actual redeemed delta, quote LI.FI, swap
-          const balAfter = await erc20Balance(alloc.assetAddress)
-          const delta = balAfter - balBefore
+          // Step 2: parse redeem receipt logs for Transfer(to=user) of the
+          // underlying asset — atomic, no dependency on RPC state propagation.
+          const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+          const userLower = address.value!.toLowerCase()
+          const assetLower = alloc.assetAddress.toLowerCase()
+          let delta = 0n
+          for (const log of redeemResult.receipt.logs) {
+            if (log.address.toLowerCase() !== assetLower) continue
+            if (log.topics[0] !== TRANSFER_TOPIC) continue
+            const toTopic = log.topics[2]
+            if (!toTopic) continue
+            const toAddr = ('0x' + toTopic.slice(26)).toLowerCase()
+            if (toAddr !== userLower) continue
+            delta += BigInt(log.data)
+          }
           if (delta <= 0n) {
-            console.warn(`[withdraw] ${alloc.assetSymbol}: no balance delta, skipping swap`)
+            console.warn(`[withdraw] ${alloc.assetSymbol}: no Transfer to user in redeem receipt, skipping swap`)
             continue
           }
 
@@ -594,9 +587,9 @@ async function executeWithdraw() {
         withdrawStep.value = 'idle'
         return
       }
-      const hash = await redeemOneAlloc(alloc, pct, send, pub, encodeFunctionData, parseAbi)
-      if (hash) {
-        lastHash = hash
+      const result = await redeemOneAlloc(alloc, pct, send, pub, encodeFunctionData, parseAbi)
+      if (result) {
+        lastHash = result.hash
         withdrawStep.value = 'confirming'
       }
     } else {

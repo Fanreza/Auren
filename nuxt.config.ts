@@ -39,7 +39,11 @@ export default defineNuxtConfig({
       ],
     },
     workbox: {
-      navigateFallback: '/',
+      // SPA-mode fallback. Use the precached index.html (which IS in
+      // globPatterns via *.html) so workbox doesn't throw `non-precached-url`
+      // when it tries to resolve `/`.
+      navigateFallback: '/index.html',
+      navigateFallbackDenylist: [/^\/api\//, /^\/_nuxt\//, /^\/sw\.js$/],
       globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
       runtimeCaching: [
         {

@@ -3,7 +3,7 @@ export const BRAND = {
   shortName: 'Auren',
   domain: 'auren.app',
   siteUrl: 'https://auren.app',
-  supportX: 'https://x.com/aurenapp',
+  supportX: 'https://x.com/auren_earn',
   tagline: 'Goal-based savings that work from any chain.',
   description:
     'Auren lets you save toward real goals with smart pockets, embedded wallets, and crosschain deposits — no crypto experience needed.',

@@ -32,12 +32,22 @@ async function load() {
   const id = route.params.id as string
   strategy.value = await store.fetchById(id)
   loading.value = false
-  if (!strategy.value) error.value = 'Strategy not found or has been removed'
+  if (!strategy.value) {
+    error.value = 'Strategy not found or has been removed'
+    return
+  }
+  // Hydrate per-allocation APY/TVL via LI.FI vault detail endpoint. This avoids
+  // depending on the curated 3-asset catalog (which misses non-canonical assets
+  // like wrsETH) and does exactly N direct lookups — one per vault.
+  await Promise.all(
+    strategy.value.allocations.map(a =>
+      catalog.fetchVaultByAddress(a.vault_chain_id, a.vault_address),
+    ),
+  )
 }
 
 onMounted(() => {
   load()
-  catalog.fetchCatalog()
   // Load user's strategies so we can detect existing forks of this one
   if (profileStore.currentUser?.id) store.fetchMine(profileStore.currentUser.id)
 })

@@ -720,8 +720,11 @@ const averageApy = computed(() => {
               </Button>
             </div>
 
-            <!-- Pocket cards: 1 col mobile, 2 col desktop -->
-            <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Pocket cards: horizontal bank-card slider on mobile, 2-col grid on desktop -->
+            <div
+              v-else
+              class="pocket-slider flex gap-3 overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-2 sm:grid sm:grid-cols-2 sm:overflow-visible sm:snap-none sm:mx-0 sm:px-0 sm:pb-0"
+            >
               <AppPocketCard
                 v-for="pocket in pockets"
                 :key="pocket.id"
@@ -730,6 +733,7 @@ const averageApy = computed(() => {
                 :asset-price="profileStore.getAssetPrice(pocket.strategy_key)"
                 :apy="profileStore.getStrategyApy(pocket.strategy_key)"
                 :loading="loadingPositions"
+                class="w-[85%] shrink-0 snap-center sm:w-auto sm:shrink"
                 @click="navigateTo(`/pocket/${pocket.id}`)"
                 @deposit="handlePocketDeposit(pocket)"
                 @withdraw="handlePocketWithdraw(pocket)"
@@ -928,3 +932,13 @@ const averageApy = computed(() => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.pocket-slider {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.pocket-slider::-webkit-scrollbar {
+  display: none;
+}
+</style>

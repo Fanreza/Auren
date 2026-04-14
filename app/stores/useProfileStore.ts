@@ -216,43 +216,9 @@ export const useProfileStore = defineStore('profile', () => {
   // Minimum TVL to consider a vault safe (USD)
   const MIN_VAULT_TVL_USD = 10_000_000
 
-  /** Probe whether a vault is LI.FI Composer-compatible by requesting a
-   *  tiny dummy quote. Composer support is what allows single-tx deposits;
-   *  `isTransactional` from Earn API only means the vault accepts onchain
-   *  deposits (not that Composer has an adapter for it). */
-  async function isComposerCompatible(
-    vaultAddress: string,
-    assetAddress: string,
-    assetDecimals: number,
-  ): Promise<boolean> {
-    // Probe with 1 unit of underlying (safe — no actual tx is sent)
-    const probeAmount = (BigInt(10) ** BigInt(assetDecimals)).toString()
-    // Any valid address works — LI.FI doesn't check balance for quote generation
-    const probeAddress = '0x000000000000000000000000000000000000dEaD'
-    try {
-      const quote = await $fetch<any>('/api/lifi/quote', {
-        query: {
-          fromChain: 8453,
-          toChain: 8453,
-          fromToken: assetAddress,
-          toToken: vaultAddress,
-          fromAmount: probeAmount,
-          fromAddress: probeAddress,
-          toAddress: probeAddress,
-          slippage: 0.005,
-          order: 'RECOMMENDED',
-        },
-      })
-      return quote?.tool === 'composer'
-    } catch {
-      return false
-    }
-  }
-
   /** Fetch top N vaults per strategy's single asset from Base.
    *  Filter: underlying token must match strategy.assetAddress (canonical),
-   *  TVL >= $10M, transactional, redeemable, no timelock, AND Composer-compatible.
-   *  Composer is probed at runtime via a dummy quote — guarantees single-tx deposits.
+   *  TVL >= $10M, transactional, redeemable, no timelock.
    *  Docs: https://docs.li.fi/api-reference/vaults/list-vaults-with-optional-filtering */
   async function fetchVaultSnapshots() {
     await Promise.allSettled(
@@ -288,37 +254,10 @@ export const useProfileStore = defineStore('profile', () => {
               return true
             })
 
-            // Populate display data from the top static candidate immediately
-            // so Explore cards always show APY/TVL, even before Composer probe.
-            if (staticallyOk.length && !vaults.length) {
+            if (staticallyOk.length) {
               vaults = staticallyOk.slice(0, VAULTS_PER_TOKEN)
+              break
             }
-
-            // Walk sorted candidates top-down, probing Composer compatibility.
-            // This runs in background — if probe succeeds we refine `vaults`
-            // to only Composer-compatible ones, but display is never empty.
-            const composerVaults: any[] = []
-            for (const candidate of staticallyOk) {
-              if (composerVaults.length >= VAULTS_PER_TOKEN) break
-              try {
-                const ok = await isComposerCompatible(
-                  candidate.address,
-                  strategy.assetAddress,
-                  strategy.decimals,
-                )
-                if (ok) {
-                  composerVaults.push(candidate)
-                } else if (import.meta.dev) {
-                  const proto = typeof candidate.protocol === 'object' ? candidate.protocol?.name : candidate.protocol
-                  console.warn(`[vault] ${candidate.name} (${proto}) rejected: not Composer-compatible`)
-                }
-              } catch (e) {
-                if (import.meta.dev) console.warn('[vault] probe threw, keeping static candidate', e)
-              }
-            }
-            // If any composer vault passed, use it. Otherwise keep static fallback.
-            if (composerVaults.length) vaults = composerVaults
-            if (vaults.length) break
           } catch (e) {
             console.error(`[vault] ${symbol}: fetch failed`, e)
           }

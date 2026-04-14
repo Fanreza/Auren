@@ -10,12 +10,12 @@
  * Filter pipeline:
  *  1. LI.FI Earn API server-side filter (minTvlUsd, sortBy=apy, limit=50)
  *  2. Client static filter (isTransactional/isRedeemable/timelock/canonical underlying/dedupe)
- *  3. Runtime Composer probe (/v1/quote dummy call, keep tool === 'composer' only)
  *
  * Session cache: `_catalogFetched` flag prevents duplicate fetches.
  */
 import { defineStore } from 'pinia'
 import { STRATEGIES, STRATEGY_LIST, type StrategyKey } from '~/config/strategies'
+import { MIN_VAULT_TVL_USD, normalizeApy, passesVaultFilter } from '~/utils/vaultFilter'
 
 export interface CatalogVault {
   address: string
@@ -28,35 +28,6 @@ export interface CatalogVault {
   assetSymbol: string
   assetAddress: string
   strategyKey: StrategyKey  // derived from underlying asset match
-}
-
-const MIN_VAULT_TVL_USD = 10_000_000
-
-async function isComposerCompatible(
-  vaultAddress: string,
-  assetAddress: string,
-  assetDecimals: number,
-): Promise<boolean> {
-  const probeAmount = (BigInt(10) ** BigInt(assetDecimals)).toString()
-  const probeAddress = '0x000000000000000000000000000000000000dEaD'
-  try {
-    const quote = await $fetch<any>('/api/lifi/quote', {
-      query: {
-        fromChain: 8453,
-        toChain: 8453,
-        fromToken: assetAddress,
-        toToken: vaultAddress,
-        fromAmount: probeAmount,
-        fromAddress: probeAddress,
-        toAddress: probeAddress,
-        slippage: 0.005,
-        order: 'RECOMMENDED',
-      },
-    })
-    return quote?.tool === 'composer'
-  } catch {
-    return false
-  }
 }
 
 export const useVaultCatalog = defineStore('vaultCatalog', () => {
@@ -120,30 +91,13 @@ export const useVaultCatalog = defineStore('vaultCatalog', () => {
         })
         const candidates: any[] = res?.data ?? []
         const seen = new Set<string>()
-        const staticallyOk = candidates.filter((v) => {
-          if (v.isTransactional !== true) return false
-          if (v.isRedeemable !== true) return false
-          if (v.timeLock && v.timeLock > 0) return false
-          const u = v.underlyingTokens?.[0]?.address?.toLowerCase()
-          if (u !== canonical) return false
-          const addr = v.address?.toLowerCase()
-          if (!addr || seen.has(addr)) return false
-          seen.add(addr)
-          return true
-        })
+        const staticallyOk = candidates.filter(v =>
+          passesVaultFilter(v, { canonicalUnderlying: canonical, seen }),
+        )
 
-        // Composer-probe top candidates, keep all that pass (no hard limit —
-        // user picks which to use, we just return the Composer-compatible set)
         const composerVaults: CatalogVault[] = []
-        for (const candidate of staticallyOk.slice(0, 10)) {
-          const ok = await isComposerCompatible(
-            candidate.address,
-            strategy.assetAddress,
-            strategy.decimals,
-          )
-          if (!ok) continue
-          const rawApy = candidate.analytics?.apy?.total ?? 0
-          const apy = rawApy > 1 ? rawApy / 100 : rawApy
+        for (const candidate of staticallyOk) {
+          const apy = normalizeApy(candidate.analytics?.apy?.total)
           const protocol = typeof candidate.protocol === 'object'
             ? (candidate.protocol?.name ?? 'Unknown')
             : String(candidate.protocol ?? 'Unknown')
@@ -170,8 +124,8 @@ export const useVaultCatalog = defineStore('vaultCatalog', () => {
 
   /**
    * Open catalog fetcher — queries LI.FI Earn without an asset lock, applies
-   * the same static filters + Composer probe. Used by the strategy builder
-   * so users can pick ANY asset as long as it's Composer-routable.
+   * the same static filters. Used by the strategy builder so users can pick
+   * ANY asset as long as it's LI.FI-transactional.
    */
   async function fetchOpenCatalog(force = false) {
     if (_openFetched && !force && openVaults.value.length) return
@@ -187,31 +141,13 @@ export const useVaultCatalog = defineStore('vaultCatalog', () => {
       })
       const candidates: any[] = res?.data ?? []
       const seen = new Set<string>()
-      const staticallyOk = candidates.filter((v) => {
-        if (v.isTransactional !== true) return false
-        if (v.isRedeemable !== true) return false
-        if (v.timeLock && v.timeLock > 0) return false
-        const underlying = v.underlyingTokens?.[0]
-        if (!underlying?.address) return false
-        const addr = v.address?.toLowerCase()
-        if (!addr || seen.has(addr)) return false
-        seen.add(addr)
-        return true
-      })
+      const staticallyOk = candidates.filter(v => passesVaultFilter(v, { seen }))
 
-      // Composer probe — limit to top 30 candidates for latency
       const result: CatalogVault[] = []
-      for (const candidate of staticallyOk.slice(0, 30)) {
+      for (const candidate of staticallyOk) {
         const underlying = candidate.underlyingTokens?.[0]
         if (!underlying?.address || !underlying?.decimals) continue
-        const ok = await isComposerCompatible(
-          candidate.address,
-          underlying.address,
-          underlying.decimals,
-        )
-        if (!ok) continue
-        const rawApy = candidate.analytics?.apy?.total ?? 0
-        const apy = rawApy > 1 ? rawApy / 100 : rawApy
+        const apy = normalizeApy(candidate.analytics?.apy?.total)
         const protocol = typeof candidate.protocol === 'object'
           ? (candidate.protocol?.name ?? 'Unknown')
           : String(candidate.protocol ?? 'Unknown')
@@ -252,6 +188,59 @@ export const useVaultCatalog = defineStore('vaultCatalog', () => {
     return openVaults.value.find(v => v.address.toLowerCase() === target) ?? null
   }
 
+  /** Fetch a single vault directly by address via LI.FI's detail endpoint and
+   *  merge it into openVaults so subsequent findByAddress calls hit the cache.
+   *  Used when an allocation references a vault outside the top-N catalog fetches. */
+  const _inflight = new Map<string, Promise<CatalogVault | null>>()
+  async function fetchVaultByAddress(chainId: number, address: string): Promise<CatalogVault | null> {
+    const key = `${chainId}:${address.toLowerCase()}`
+    const existing = findByAddress(address)
+    if (existing) return existing
+    if (_inflight.has(key)) return _inflight.get(key)!
+
+    const promise = (async () => {
+      try {
+        const v: any = await $fetch('/api/lifi/vault', { query: { chainId, address } })
+        if (!v?.address) return null
+        const apy = normalizeApy(v.analytics?.apy?.total)
+        const protocol = typeof v.protocol === 'object'
+          ? (v.protocol?.name ?? 'Unknown')
+          : String(v.protocol ?? 'Unknown')
+        const underlying = v.underlyingTokens?.[0] ?? v.underlyingToken
+        const sym = (underlying?.symbol ?? '').toLowerCase()
+        const strategyKey: StrategyKey =
+          sym.includes('btc') ? 'balanced'
+          : sym.includes('eth') ? 'aggressive'
+          : 'conservative'
+        const vault: CatalogVault = {
+          address: v.address,
+          chainId: v.chainId ?? chainId,
+          name: v.name ?? underlying?.symbol ?? '',
+          protocol,
+          vaultSymbol: v.name ?? underlying?.symbol ?? '',
+          apy,
+          tvl: parseFloat(v.analytics?.tvl?.usd ?? '0') || 0,
+          assetSymbol: underlying?.symbol ?? '',
+          assetAddress: underlying?.address ?? '',
+          strategyKey,
+        }
+        // Merge into openVaults (dedupe by address) so findByAddress finds it next time
+        const target = vault.address.toLowerCase()
+        if (!openVaults.value.some(o => o.address.toLowerCase() === target)) {
+          openVaults.value = [...openVaults.value, vault]
+        }
+        return vault
+      } catch (e) {
+        if (import.meta.dev) console.warn('[catalog] vault detail fetch failed', address, e)
+        return null
+      } finally {
+        _inflight.delete(key)
+      }
+    })()
+    _inflight.set(key, promise)
+    return promise
+  }
+
   /** Get the top-APY vault for a strategy (used as "default" preset). */
   function topForStrategy(key: StrategyKey): CatalogVault | null {
     const list = byStrategy.value[key] ?? []
@@ -275,6 +264,7 @@ export const useVaultCatalog = defineStore('vaultCatalog', () => {
     error,
     fetchCatalog,
     fetchOpenCatalog,
+    fetchVaultByAddress,
     findByAddress,
     topForStrategy,
     reset,

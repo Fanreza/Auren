@@ -12,6 +12,7 @@ import { formatUnits, parseAbi } from 'viem'
 import { useLifi, type LifiVault } from '~/composables/useLifi'
 import { usePrivyAuth } from '~/composables/usePrivy'
 import { useCoinGecko } from '~/composables/useCoinGecko'
+import { normalizeApy, passesVaultFilter } from '~/utils/vaultFilter'
 
 export interface EarnVault {
   address: string
@@ -99,20 +100,16 @@ export const useEarnStore = defineStore('earn', () => {
             },
           }).catch(() => ({ data: [] }))
           const list: any[] = res?.data ?? []
+          const seen = new Set<string>()
           return list
-            .filter(v => v.isTransactional === true && v.isRedeemable === true)
+            .filter(v => passesVaultFilter(v, { seen }))
             .map((v): EarnVault => {
-              // APY values from LI.FI come as percent (not decimal) — normalize to decimal
-              const normalize = (raw: unknown): number => {
-                const n = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '0')) || 0
-                return n > 1 ? n / 100 : n
-              }
-              const apy = normalize(v.analytics?.apy?.total)
-              const apyBase = normalize(v.analytics?.apy?.base)
-              const apyReward = normalize(v.analytics?.apy?.reward)
-              const apy1d = normalize(v.analytics?.apy1d)
-              const apy7d = normalize(v.analytics?.apy7d)
-              const apy30d = normalize(v.analytics?.apy30d)
+              const apy = normalizeApy(v.analytics?.apy?.total)
+              const apyBase = normalizeApy(v.analytics?.apy?.base)
+              const apyReward = normalizeApy(v.analytics?.apy?.reward)
+              const apy1d = normalizeApy(v.analytics?.apy1d)
+              const apy7d = normalizeApy(v.analytics?.apy7d)
+              const apy30d = normalizeApy(v.analytics?.apy30d)
 
               const protoObj = typeof v.protocol === 'object' ? v.protocol : null
               const proto = protoObj?.name ?? String(v.protocol ?? 'Unknown')

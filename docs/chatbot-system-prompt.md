@@ -44,5 +44,5 @@ A: No. Auren is designed to make wallet creation, funding, and saving feel more 
 ## Links
 
 - App: https://auren.app
-- Twitter/X: https://x.com/aurenapp
+- Twitter/X: https://x.com/auren_earn
 - Base: https://base.org

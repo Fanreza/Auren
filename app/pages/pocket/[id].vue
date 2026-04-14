@@ -372,7 +372,7 @@ async function nativeShare() {
 function shareToTwitter() {
   const text = encodeURIComponent(shareText())
   const url = encodeURIComponent(BRAND.siteUrl)
-  window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'width=550,height=420')
+  window.open(`https://x.com/intent/tweet?text=${text}&url=${url}`, '_blank', 'width=550,height=420')
 }
 
 function shareToFarcaster() {

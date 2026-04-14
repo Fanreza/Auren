@@ -169,10 +169,24 @@ const fromToken = ref<PickedToken | null>(null)
 const amount = ref('')
 const showPicker = ref(false)
 
-// Strategy allocations (from live vault data)
-const strategyAllocs = computed(() =>
-  strategyKey.value ? (profileStore.lifiVaultAddresses[strategyKey.value] ?? []) : [],
-)
+// Strategy allocations — source of truth is the user's picks in step 2
+// (supports multi-vault custom strategies). Falls back to the system template
+// snapshot only when nothing has been picked yet.
+const strategyAllocs = computed(() => {
+  if (pickedAllocations.value.length) {
+    return pickedAllocations.value.map(({ vault, weight }) => ({
+      address: vault.address,
+      chainId: vault.chainId,
+      protocol: vault.protocol,
+      vaultSymbol: vault.vaultSymbol,
+      apy: vault.apy,
+      tvl: vault.tvl,
+      weight,
+      assetSymbol: vault.assetSymbol,
+    }))
+  }
+  return strategyKey.value ? (profileStore.lifiVaultAddresses[strategyKey.value] ?? []) : []
+})
 
 const fromChainId = computed(() => fromToken.value?.chainId ?? 8453)
 
@@ -407,6 +421,32 @@ watch(open, (v) => {
 
 watch(isSuccess, (v) => { if (v) setTimeout(() => { open.value = false }, 2400) })
 
+/** Pre-fetch each unique vault referenced by any of the user's strategies via
+ *  LI.FI's per-vault detail endpoint. Results merge into vaultCatalog.openVaults,
+ *  so handleStrategyPick → findByAddress hits a warm cache immediately. */
+async function prefetchMyStrategyVaults() {
+  const strategies = strategyStore.myStrategies
+  if (!strategies.length) return
+  const seen = new Set<string>()
+  const targets: Array<{ chainId: number; address: string }> = []
+  for (const s of strategies) {
+    for (const a of s.allocations) {
+      const key = `${a.vault_chain_id}:${a.vault_address.toLowerCase()}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      targets.push({ chainId: a.vault_chain_id, address: a.vault_address })
+    }
+  }
+  await Promise.all(targets.map(t => vaultCatalog.fetchVaultByAddress(t.chainId, t.address)))
+}
+
+watch(vaultPickMode, (mode) => {
+  if (mode === 'my') prefetchMyStrategyVaults()
+})
+watch(() => strategyStore.myStrategies.length, () => {
+  if (vaultPickMode.value === 'my') prefetchMyStrategyVaults()
+})
+
 // ── Actions ───────────────────────────────────────────────────────────────────
 function handleTokenSelected(t: PickedToken) {
   fromToken.value = t
@@ -434,8 +474,6 @@ function handleStrategyPick(strategy: StrategyWithAllocations) {
       tvl: 0,
       assetSymbol: alloc.asset_symbol ?? '',
       assetAddress: alloc.asset_address ?? '',
-      // Fallback strategy key — doesn't really matter for multi-vault pockets
-      // since the display key is taken from the heaviest allocation below.
       strategyKey: (fromCatalog?.strategyKey ?? 'conservative') as StrategyKey,
     }
     entries.push({ vault: v, weight: alloc.weight })

@@ -1,8 +1,8 @@
 // LI.FI Earn single-vault detail proxy.
-// Endpoint: GET https://earn.li.fi/v1/earn/vaults/{chainId}/{address}
-// Undocumented but live — same shape as the list endpoint, scoped to one vault.
+// Endpoint: GET https://earn.li.fi/v1/vaults/{chainId}/{address}
+// Same shape as the list endpoint, scoped to one vault.
 
-const BASE = 'https://earn.li.fi/v1/earn/vaults'
+const BASE = 'https://earn.li.fi/v1/vaults'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)

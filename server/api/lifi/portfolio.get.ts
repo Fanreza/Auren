@@ -10,5 +10,5 @@ export default defineEventHandler(async (event) => {
   }
 
   const headers: Record<string, string> = lifiApiKey ? { 'x-lifi-api-key': lifiApiKey } : {}
-  return await $fetch(`${LIFI_EARN_BASE}/v1/earn/portfolio/${wallet}/positions`, { headers })
+  return await $fetch(`${LIFI_EARN_BASE}/v1/portfolio/${wallet}/positions`, { headers })
 })

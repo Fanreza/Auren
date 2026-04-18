@@ -1,8 +1,8 @@
 // LI.FI Earn Vaults API proxy
 // Docs: https://docs.li.fi/api-reference/vaults/list-vaults-with-optional-filtering
-// Endpoint: GET https://earn.li.fi/v1/earn/vaults
+// Endpoint: GET https://earn.li.fi/v1/vaults
 
-const BASE = 'https://earn.li.fi/v1/earn/vaults'
+const BASE = 'https://earn.li.fi/v1/vaults'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)

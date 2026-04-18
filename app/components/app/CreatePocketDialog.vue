@@ -200,8 +200,71 @@ const fromBalance = computed(() => {
   return wt ? wt.formattedBal.toString() : null
 })
 
+// ── Gas reserve (Pimlico paymaster) ──────────────────────────────────────
+// Paymaster pulls gas in USDC from the smart account at postOp. When the user
+// deposits USDC, we must leave room — otherwise the whole userOp spends USDC
+// in the swap and postOp reverts with TRANSFER_FROM_FAILED → "Swap produced
+// no output" or similar. Each allocation = 1 userOp, so the reserve scales
+// linearly with the number of allocs.
+const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const gasReservePerOp = ref(0) // in USDC (decimal)
+
+async function estimateGasReservePerOp() {
+  try {
+    const { createPimlicoClient } = await import('permissionless/clients/pimlico')
+    const { http } = await import('viem')
+    const { entryPoint07Address } = await import('viem/account-abstraction')
+    const { base } = await import('viem/chains')
+    const config = useRuntimeConfig()
+    const pimlicoApiKey = (config.public.pimlicoApiKey as string)?.trim()
+    if (!pimlicoApiKey) { gasReservePerOp.value = 0.02; return }
+
+    const pimlicoClient = createPimlicoClient({
+      chain: base,
+      transport: http(`https://api.pimlico.io/v2/base/rpc?apikey=${pimlicoApiKey}`),
+      entryPoint: { address: entryPoint07Address, version: '0.7' },
+    })
+    const [quotes, gasPrice] = await Promise.all([
+      pimlicoClient.getTokenQuotes({ tokens: [USDC_BASE] }),
+      pimlicoClient.getUserOperationGasPrice(),
+    ])
+    if (!quotes.length) { gasReservePerOp.value = 0.02; return }
+    const q = quotes[0]
+    const maxFee = gasPrice.fast.maxFeePerGas
+    // LI.FI Composer userOps are heavier than plain transfers (swap + deposit)
+    // ~500k gas budget to be safe
+    const totalGas = 500_000n
+    const costInToken = ((totalGas + q.postOpGas) * maxFee * q.exchangeRate) / (10n ** 18n)
+    gasReservePerOp.value = Number(costInToken) / 1e6
+  } catch {
+    gasReservePerOp.value = 0.02 // safe fallback
+  }
+}
+
+onMounted(() => { estimateGasReservePerOp() })
+
+// Total gas reserve = per-op × number of allocations (1 userOp per alloc)
+const totalGasReserve = computed(() => {
+  const numAllocs = Math.max(strategyAllocs.value.length, 1)
+  return gasReservePerOp.value * numAllocs
+})
+
+// Does this deposit consume the gas token (USDC) and therefore need reserve?
+const needsGasReserve = computed(() =>
+  fromToken.value?.address?.toLowerCase() === USDC_BASE.toLowerCase()
+  && fromToken.value?.chainId === 8453,
+)
+
 function setMax() {
-  if (fromBalance.value) amount.value = fromBalance.value
+  if (!fromBalance.value) return
+  const bal = parseFloat(fromBalance.value)
+  if (needsGasReserve.value) {
+    // Leave room for paymaster — cap max at balance - reserve
+    const maxAmt = Math.max(bal - totalGasReserve.value, 0)
+    amount.value = maxAmt.toFixed(6)
+  } else {
+    amount.value = fromBalance.value
+  }
 }
 
 const amountError = computed(() => {
@@ -210,6 +273,11 @@ const amountError = computed(() => {
   if (isNaN(val) || val <= 0) return 'Enter a valid amount'
   const bal = parseFloat(fromBalance.value ?? '0')
   if (fromBalance.value && val > bal) return 'Insufficient balance'
+  if (needsGasReserve.value && fromBalance.value) {
+    if (val + totalGasReserve.value > bal) {
+      return `Leave ~$${totalGasReserve.value.toFixed(2)} USDC for gas`
+    }
+  }
   return null
 })
 
